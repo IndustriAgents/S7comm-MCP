@@ -15,14 +15,17 @@ the office network.
 
 ## What the server gates, and what it does not
 
-- **Writes are enabled by default.** `write_db`, `write_output`,
-  `write_marker`, `write_multiple_vars` and `write_tag` are refused only when
-  `S7_WRITES_ENABLED=false`. Set that for any session that only needs to read.
+- **Writes are disabled by default.** `write_db`, `write_output`,
+  `write_marker`, `write_multiple_vars` and `write_tag` refuse unless
+  `S7_WRITES_ENABLED=true`. Enable it only for sessions that need to write.
+  A value the server does not recognise as true or false stops it at startup.
 - **CPU RUN/STOP is disabled by default.** `set_cpu_state` is refused unless
   `S7_SYSTEM_CMDS_ENABLED=true`.
 - **There is no per-address allowlist.** With writes enabled, any DB, output or
   marker the PLC lets the connection write is writable by the model. Values are
-  not range-checked beyond their data type.
+  not range-checked beyond their data type. A BOOL write changes only its own
+  bit, and an invalid entry in a batch write stops the whole batch before
+  anything is written.
 - **Whatever the PLC permits is what the server can do.** On S7-1200/1500,
   PUT/GET access and its protection level are configured in the PLC project;
   use them to limit what this connection can reach.
@@ -33,11 +36,13 @@ the office network.
   exercised end to end without touching real plant. Do that first, every time.
 - **Keep it read-only until you mean otherwise.** Write tools move physical
   equipment. There is no undo, and a language model will call a tool it has
-  been given.
+  been given. Check which `.env` the server loaded (it logs the path on stderr):
+  the file is looked up from the package directory upwards, so a `.env` in a
+  parent directory can enable writes.
 - **Do not expose the server beyond the host running the client.** It is a
   stdio process meant to run beside the MCP client, not a network service. The
-  mock PLC, on the other hand, listens on all interfaces; run it on a trusted
-  host.
+  mock PLC, on the other hand, listens on all interfaces by default; start it
+  with `--host 127.0.0.1` unless other machines need to reach it.
 - **Segment the network.** The server should sit where a PLC engineering
   workstation would sit, behind whatever separates your control network from
   everything else.
