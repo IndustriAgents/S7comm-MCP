@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import StrictInt
 
 from .config import env_bool, env_str
@@ -585,6 +586,16 @@ def _error_text(exc: BaseException) -> str:
 # ------------------------------------------------------------------------------
 
 
+#: Tools that change the PLC; everything else only reads.
+WRITE_TOOLS = frozenset(
+    {"write_db", "write_output", "write_marker", "write_multiple_vars", "write_tag", "set_cpu_state"}
+)
+# Clients use these hints to decide what to auto-approve or retry. Nothing that
+# changes the PLC may claim to be idempotent.
+READ_ONLY_HINTS = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True)
+WRITE_HINTS = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True)
+
+
 def register_tools(server: FastMCP, resources: ToolResources) -> None:
     """Register all MCP tools on the provided server."""
 
@@ -594,7 +605,8 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         # The docstring is the description clients show in tools/list.
         if not (fn.__doc__ or "").strip():
             raise ValueError(f"tool {fn.__name__} needs a docstring")
-        return server.tool(description=inspect.cleandoc(fn.__doc__ or ""))(fn)
+        hints = WRITE_HINTS if fn.__name__ in WRITE_TOOLS else READ_ONLY_HINTS
+        return server.tool(description=inspect.cleandoc(fn.__doc__ or ""), annotations=hints)(fn)
 
     def _writes_refused(tool: str) -> Envelope | None:
         if resources.config.writes_enabled:

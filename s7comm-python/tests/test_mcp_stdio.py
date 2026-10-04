@@ -92,6 +92,21 @@ async def test_tools_list_has_a_description_for_every_tool(mock_plc: MockPLC) ->
         assert "S7_WRITES_ENABLED" in description
 
 
+WRITE_TOOLS = {"write_db", "write_output", "write_marker", "write_multiple_vars", "write_tag", "set_cpu_state"}
+
+
+async def test_tool_annotations_never_invite_retries_of_writes(mock_plc: MockPLC) -> None:
+    async with mcp_session(server_env(mock_plc.port)) as client:
+        listed = await client.session.list_tools()
+    for tool in listed.tools:
+        hints = tool.annotations
+        assert hints is not None, tool.name
+        if tool.name in WRITE_TOOLS:
+            assert (hints.readOnlyHint, hints.destructiveHint, hints.idempotentHint) == (False, True, False), tool.name
+        else:
+            assert hints.readOnlyHint is True and hints.destructiveHint is False, tool.name
+
+
 async def test_scenarios_read_only(mock_plc: MockPLC, tmp_path: Path) -> None:
     tags = tmp_path / "tags.json"
     tags.write_text(
