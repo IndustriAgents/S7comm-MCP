@@ -46,9 +46,12 @@ the office network.
   `S7_SYSTEM_CMDS_ENABLED` are honoured only from the process environment
   (e.g. the MCP client's `env` block) or a file passed with `--env-file`. The
   implicit `s7comm-python/.env` may set connection settings, but a value in it
-  that would enable a switch is ignored with a warning on stderr. The server
-  never reads a `.env` from its working directory, which for a directly
-  launched server is the MCP client's project and may not be trusted.
+  that would enable a switch is ignored with a warning on stderr (whatever the
+  case of the name, with or without `export`). The implicit file may set only
+  `S7_*` and `TAG_MAP_FILE`; any other key, such as `PATH`, `LD_PRELOAD` or
+  `PYTHONPATH`, is ignored with a warning. The server never reads a `.env`
+  from its working directory, which for a directly launched server is the
+  MCP client's project and may not be trusted.
 - **Do not expose the server beyond the host running the client.** It is a
   stdio process meant to run beside the MCP client, not a network service. The
   mock PLC, on the other hand, listens on all interfaces by default; start it

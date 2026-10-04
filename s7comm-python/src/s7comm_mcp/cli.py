@@ -27,6 +27,9 @@ logger = logging.getLogger("s7comm_mcp")
 
 #: Variables that enable writes or commands. Never taken from an implicit .env.
 GATE_VARIABLES = ("S7_WRITES_ENABLED", "S7_SYSTEM_CMDS_ENABLED")
+#: What an implicit .env may set (besides the gates, which it may not).
+OWN_PREFIX = "S7_"
+OWN_EXTRAS = ("TAG_MAP_FILE",)
 _FALSE_VALUES = {"", "0", "false", "no", "n", "off"}
 
 
@@ -55,17 +58,34 @@ def find_env_file(start: Path | None = None) -> Path | None:
     return None
 
 
+def is_own_setting(name: str) -> bool:
+    """A configuration variable of this server (S7_* or TAG_MAP_FILE)."""
+    return name.startswith(OWN_PREFIX) or name in OWN_EXTRAS
+
+
 def load_env_file(path: Path, *, explicit: bool) -> None:
     """Copy settings from ``path`` into ``os.environ`` without overriding it.
 
     Variables already set in the process environment (e.g. by the MCP client's
-    ``env`` block) win. From an implicit file, the safety switches are dropped:
-    a value that would enable one is reported on stderr and ignored.
+    ``env`` block) win. An explicit ``--env-file`` may set anything. From the
+    implicit ``.env`` only this server's own non-gate settings are taken:
+
+    - keys are compared case-insensitively (Windows upper-cases environment
+      names, so ``s7_writes_enabled`` would become ``S7_WRITES_ENABLED``);
+      python-dotenv already strips an ``export`` prefix and quotes;
+    - a safety switch that would be enabled is reported on stderr and ignored;
+    - any other key (PATH, LD_PRELOAD, DYLD_*, PYTHON*, ...) is reported and
+      ignored, since it could change how the process itself behaves.
     """
-    for key, value in dotenv_values(path).items():
+    for raw_key, value in dotenv_values(path).items():
         if value is None:
             continue
-        if not explicit and key in GATE_VARIABLES:
+        key = raw_key.strip()
+        name = key.upper()
+        if explicit:
+            os.environ.setdefault(key, value)
+            continue
+        if name in GATE_VARIABLES:
             if value.strip().lower() not in _FALSE_VALUES:
                 logger.warning(
                     "Ignoring %s=%s from %s: safety switches are only read from the process environment "
@@ -75,8 +95,16 @@ def load_env_file(path: Path, *, explicit: bool) -> None:
                     path,
                 )
             continue
-        os.environ.setdefault(key, value)
-    logger.info("Loaded settings from %s%s", path, "" if explicit else " (safety switches excluded)")
+        if not is_own_setting(name):
+            logger.warning(
+                "Ignoring %s from %s: the implicit .env may only set S7_* and TAG_MAP_FILE "
+                "(use the process environment or --env-file for anything else)",
+                key,
+                path,
+            )
+            continue
+        os.environ.setdefault(name, value)
+    logger.info("Loaded settings from %s%s", path, "" if explicit else " (own non-gate settings only)")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

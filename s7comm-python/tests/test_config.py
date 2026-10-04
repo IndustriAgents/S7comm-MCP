@@ -137,6 +137,55 @@ def test_implicit_env_file_cannot_enable_writes(
     assert (tool_config.writes_enabled, tool_config.system_cmds_enabled) == (False, False)
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "s7_writes_enabled=true",  # Windows would upper-case this into the real switch
+        "S7_Writes_Enabled=1",
+        "export S7_WRITES_ENABLED=true",
+        "export s7_writes_enabled='yes'",
+        'S7_WRITES_ENABLED="on"',
+        " S7_SYSTEM_CMDS_ENABLED = true",
+    ],
+)
+def test_gate_filter_ignores_case_export_and_quotes(
+    tmp_path: Path, clean_env: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, line: str
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(line + "\n")
+    with caplog.at_level("WARNING", logger="s7comm_mcp"):
+        load_env_file(env_file, explicit=False)
+    assert not any(k.upper() in ("S7_WRITES_ENABLED", "S7_SYSTEM_CMDS_ENABLED") for k in os.environ)
+    assert "safety switches are only read" in caplog.text
+    config = ToolConfig.from_env()
+    assert (config.writes_enabled, config.system_cmds_enabled) == (False, False)
+
+
+@pytest.mark.parametrize(
+    "key", ["PATH", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "PYTHONPATH", "PYTHONSTARTUP", "FASTMCP_LOG_LEVEL", "HOME"]
+)
+def test_implicit_env_file_only_sets_own_variables(
+    tmp_path: Path, clean_env: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, key: str
+) -> None:
+    clean_env.delenv(key, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"{key}=/tmp/evil\nS7_HOST=10.0.0.7\ntag_map_file=/srv/tags.json\n")
+    with caplog.at_level("WARNING", logger="s7comm_mcp"):
+        load_env_file(env_file, explicit=False)
+    assert key not in os.environ
+    assert f"Ignoring {key} from" in caplog.text
+    assert os.environ["S7_HOST"] == "10.0.0.7" and os.environ["TAG_MAP_FILE"] == "/srv/tags.json"
+
+
+def test_explicit_env_file_may_set_any_variable(tmp_path: Path, clean_env: pytest.MonkeyPatch) -> None:
+    clean_env.delenv("S7COMM_TEST_EXTRA", raising=False)
+    env_file = tmp_path / "plant.env"
+    env_file.write_text("S7COMM_TEST_EXTRA=1\nS7_HOST=10.0.0.8\n")
+    load_env_file(env_file, explicit=True)
+    assert os.environ["S7COMM_TEST_EXTRA"] == "1" and os.environ["S7_HOST"] == "10.0.0.8"
+    clean_env.delenv("S7COMM_TEST_EXTRA")
+
+
 def test_false_gates_in_an_implicit_env_file_are_dropped_quietly(
     tmp_path: Path, clean_env: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
