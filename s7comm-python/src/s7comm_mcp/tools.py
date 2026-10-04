@@ -25,7 +25,6 @@ from .s7_client import (
     OperationMeta,
     S7Client,
     S7ClientError,
-    WriteOutcomeUnknownError,
     describe_error,
 )
 
@@ -578,6 +577,21 @@ async def execute_write(client: S7Client, prepared: PreparedWrite) -> tuple[dict
     return {**addr.describe(), "written_bytes": len(prepared.payload)}, meta
 
 
+def write_outcome(exc: BaseException | None = None) -> dict[str, Any]:
+    """meta.outcome / meta.request_sent for a write or CPU command.
+
+    written: the PLC confirmed it. rejected: the PLC answered with an error, so
+    nothing was applied. unknown: sent, but no usable answer; it may have been
+    applied, so check before retrying. not_sent: stopped before the request
+    went out (disabled, invalid, or the PLC was unreachable).
+    """
+    outcome = "written" if exc is None else getattr(exc, "outcome", "not_sent")
+    return {"outcome": outcome, "request_sent": outcome != "not_sent"}
+
+
+NOT_SENT = {"outcome": "not_sent", "request_sent": False}
+
+
 def _error_text(exc: BaseException) -> str:
     if not isinstance(exc, (ValueError, S7ClientError)):
         logger.exception("unexpected error in tool", exc_info=exc)
@@ -603,7 +617,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
     def _writes_refused(tool: str) -> Envelope | None:
         if resources.config.writes_enabled:
             return None
-        return fail(WRITES_DISABLED, {"tool": tool})
+        return fail(WRITES_DISABLED, {"tool": tool, **NOT_SENT})
 
     def _system_cmds_refused() -> Envelope | None:
         # A CPU command changes the plant at least as much as a write, so it
@@ -615,7 +629,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
             "set_cpu_state is disabled: it needs both S7_WRITES_ENABLED=true and S7_SYSTEM_CMDS_ENABLED=true "
             f"(currently S7_WRITES_ENABLED={str(cfg.writes_enabled).lower()}, "
             f"S7_SYSTEM_CMDS_ENABLED={str(cfg.system_cmds_enabled).lower()})",
-            {"tool": "set_cpu_state"},
+            {"tool": "set_cpu_state", **NOT_SENT},
         )
 
     async def _read(addr_args: dict[str, Any], **kwargs: Any) -> Envelope:
@@ -636,8 +650,8 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
             prepared = prepare_write(make_address(**addr_args, **kwargs), value)
             data, op_meta = await execute_write(client, prepared)
         except Exception as exc:
-            return fail(_error_text(exc), meta)
-        return ok(data, {**op_meta, **prepared.address.describe()})
+            return fail(_error_text(exc), {**meta, **write_outcome(exc)})
+        return ok(data, {**op_meta, **prepared.address.describe(), **write_outcome()})
 
     # -----------------------------
     # Data blocks
@@ -870,8 +884,8 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         try:
             observed, meta = await client.set_cpu_state(state)
         except Exception as exc:
-            return fail(_error_text(exc), {"requested_state": state})
-        return ok({**observed, "requested_state": state.strip().upper()}, meta)
+            return fail(_error_text(exc), {"requested_state": state, **write_outcome(exc)})
+        return ok({**observed, "requested_state": state.strip().upper()}, {**meta, **write_outcome()})
 
     @tool
     async def read_system_time() -> Envelope:
@@ -972,7 +986,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
                 results.append({"index": index, "spec": spec, "success": None})
             except Exception as exc:
                 prepared.append(None)
-                results.append({"index": index, "spec": spec, "success": False, "error": _error_text(exc)})
+                results.append({"index": index, "spec": spec, "success": False, "error": _error_text(exc), **NOT_SENT})
         if not any(item["success"] is False for item in results):
             # Second pass, still read-only: every target exists on the PLC and
             # every STRING header matches, before the first write goes out.
@@ -980,50 +994,48 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
                 try:
                     await precheck_write(client, job)  # type: ignore[arg-type]
                 except Exception as exc:
-                    item.update(success=False, error=_error_text(exc))
+                    item.update(success=False, error=_error_text(exc), **NOT_SENT)
         invalid = sum(1 for item in results if item["success"] is False)
         if invalid:
             for item in results:
                 if item["success"] is None:
-                    item.update(success=False, skipped=True, error="not written: another entry is invalid")
+                    item.update(success=False, skipped=True, error="not written: another entry is invalid", **NOT_SENT)
             return fail(
                 f"Nothing was written: {invalid} of {len(results)} entries are invalid",
-                {"count": len(results), "written": 0},
+                {"count": len(results), "written": 0, **NOT_SENT},
                 data={"results": results},
             )
         written = 0
         failure: str | None = None
         for index, (item, job) in enumerate(zip(results, prepared, strict=True)):
             if failure is not None:
-                item.update(success=False, skipped=True, error=f"not written: entry {failure} failed")
+                item.update(success=False, skipped=True, error=f"not written: entry {failure} failed", **NOT_SENT)
                 continue
             try:
                 entry, _ = await execute_write(client, job)  # type: ignore[arg-type]
-            except WriteOutcomeUnknownError as exc:
-                item.update(success=False, outcome_unknown=True, error=_error_text(exc))
-                failure = str(index)
-                continue
             except Exception as exc:
-                item.update(success=False, error=_error_text(exc))
+                item.update(success=False, error=_error_text(exc), **write_outcome(exc))
                 failure = str(index)
                 continue
-            item.update(success=True, entry=entry)
+            item.update(success=True, entry=entry, **write_outcome())
             written += 1
         meta = {"count": len(results), "written": written}
         if failure is not None:
             failed_item = results[int(failure)]
             what = (
-                "got no reply and may have been applied (it was not resent)"
-                if failed_item.get("outcome_unknown")
+                "got no reply and may have been applied; check before retrying (it was not resent)"
+                if failed_item["outcome"] == "unknown"
                 else "failed"
             )
+            # meta.outcome is the outcome of the entry that stopped the batch.
+            stop = {"outcome": failed_item["outcome"], "request_sent": failed_item["request_sent"] or written > 0}
             return fail(
                 f"Entry {failure} {what}; {written} of {len(results)} entries were written before it, "
                 "the rest were skipped",
-                meta,
+                {**meta, **stop},
                 data={"results": results},
             )
-        return ok({"results": results}, meta)
+        return ok({"results": results}, {**meta, **write_outcome()})
 
     # -----------------------------
     # Tag map
@@ -1072,12 +1084,12 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         try:
             spec = resources.tag_map.get(name)
             if spec is None:
-                return fail(f"Unknown tag '{name}'", {"tag": name})
+                return fail(f"Unknown tag '{name}'", {"tag": name, **NOT_SENT})
             prepared = prepare_write(address_from_spec(spec), value)
             entry, meta = await execute_write(client, prepared)
         except Exception as exc:
-            return fail(_error_text(exc), {"tag": name})
-        return ok({"tag": name, **entry}, {**meta, "tag": name})
+            return fail(_error_text(exc), {"tag": name, **write_outcome(exc)})
+        return ok({"tag": name, **entry}, {**meta, "tag": name, **write_outcome()})
 
     # -----------------------------
     # Health

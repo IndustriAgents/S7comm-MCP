@@ -278,7 +278,7 @@ async def test_lost_write_reply_is_reported_and_not_resent(proxy: S7Proxy, direc
     client = via_proxy(proxy)
     proxy.drop_reply_to = {S7_WRITE_VAR}
     try:
-        with pytest.raises(WriteOutcomeUnknownError, match="may have been applied; it was not resent"):
+        with pytest.raises(WriteOutcomeUnknownError, match="may have been applied; check before retrying"):
             await client.write_db(1, 180, b"\xbe\xef")
     finally:
         await client.close()
@@ -345,6 +345,8 @@ async def test_tools_report_an_unknown_outcome(make_server: ServerFactory, proxy
     result = await call(server, "write_db", db_number=1, start_offset=188, value=7, data_type="INT")
     assert result["success"] is False
     assert "no reply from the PLC" in result["error"] and "not resent" in result["error"]
+    assert "may have been applied; check before retrying" in result["error"]
+    assert (result["meta"]["outcome"], result["meta"]["request_sent"]) == ("unknown", True)
     assert proxy.count(S7_WRITE_VAR) == 1
 
 
@@ -362,6 +364,56 @@ async def test_batch_stops_at_an_unknown_outcome(make_server: ServerFactory, pro
     )
     assert result["success"] is False and "may have been applied" in result["error"]
     first, second = result["data"]["results"]
-    assert first["outcome_unknown"] is True and second["skipped"] is True
+    assert first["outcome"] == "unknown" and first["request_sent"] is True
+    assert second["skipped"] is True and second["outcome"] == "not_sent"
     assert proxy.count(S7_WRITE_VAR) == 1
     assert (await direct.read_db(1, 192, 2))[0] == b"\x01\x00"
+
+
+# ----------------------------------------------- meta.outcome / meta.request_sent
+
+
+def outcome(result: dict[str, Any]) -> tuple[str, bool]:
+    return result["meta"]["outcome"], result["meta"]["request_sent"]
+
+
+async def test_outcome_written(make_server: ServerFactory) -> None:
+    result = await call(make_server(), "write_db", db_number=1, start_offset=200, value=5, data_type="INT")
+    assert result["success"] is True and outcome(result) == ("written", True)
+    bit = await call(make_server(), "write_output", start_byte=7, value=True, data_type="BOOL", bit_index=2)
+    assert outcome(bit) == ("written", True)
+
+
+async def test_outcome_not_sent(make_server: ServerFactory) -> None:
+    disabled = await call(make_server(writes=False), "write_db", db_number=1, start_offset=200, value="00")
+    assert outcome(disabled) == ("not_sent", False)
+    invalid = await call(make_server(), "write_db", db_number=1, start_offset=200, value=70000, data_type="INT")
+    assert outcome(invalid) == ("not_sent", False)
+    # The pre-send probe finds the DB missing, so the write never goes out.
+    missing = await call(make_server(), "write_db", db_number=999, start_offset=0, value="00")
+    assert outcome(missing) == ("not_sent", False) and "Item not available" in missing["error"]
+    cpu = await call(make_server(writes=False, system=True), "set_cpu_state", state="STOP")
+    assert outcome(cpu) == ("not_sent", False)
+
+
+async def test_outcome_rejected(make_server: ServerFactory) -> None:
+    # The probe (byte 254) is fine; the 4-byte write runs past DB1's end and the PLC refuses it.
+    server = make_server()
+    before = await read_hex(server, "db", 254, size=2, db=1)
+    result = await call(server, "write_db", db_number=1, start_offset=254, value="01020304")
+    assert result["success"] is False and "Address out of range" in result["error"]
+    assert outcome(result) == ("rejected", True)
+    assert await read_hex(server, "db", 254, size=2, db=1) == before
+
+
+async def test_batch_reports_the_outcome_per_entry(make_server: ServerFactory) -> None:
+    result = await call(
+        make_server(),
+        "write_multiple_vars",
+        variables=[
+            {"db_number": 1, "offset": 210, "value": 1, "data_type": "BYTE"},
+            {"area": "marker", "byte": 5, "bit": 1, "value": True, "data_type": "BOOL"},
+        ],
+    )
+    assert result["success"] is True and outcome(result) == ("written", True)
+    assert [(r["outcome"], r["request_sent"]) for r in result["data"]["results"]] == [("written", True)] * 2

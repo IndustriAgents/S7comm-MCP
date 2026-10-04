@@ -286,14 +286,16 @@ async def test_cpu_state_failure_is_an_error_not_unknown(fake_snap7: type[FakeCl
 
 async def test_refused_cpu_command_is_an_error(fake_snap7: type[FakeClient]) -> None:
     fake_snap7.command_rc = CPU_CANNOT_STOP  # python-snap7's plc_stop returns this without raising
-    with pytest.raises(OperationFailedError, match="Cannot stop PLC"):
+    with pytest.raises(OperationFailedError, match="Cannot stop PLC") as excinfo:
         await make_client().set_cpu_state("STOP")
+    assert (excinfo.value.outcome, excinfo.value.request_sent) == ("rejected", True)
 
 
 async def test_cpu_command_succeeds_only_once_the_mode_is_reached(fake_snap7: type[FakeClient]) -> None:
     fake_snap7.cpu_status = 0x08  # stays in RUN although STOP was accepted
-    with pytest.raises(OperationFailedError, match="still reports S7CpuStatusRun"):
+    with pytest.raises(OperationFailedError, match="still reports S7CpuStatusRun") as excinfo:
         await make_client(timeout=0.3).set_cpu_state("STOP")
+    assert excinfo.value.outcome == "unknown" and "check before retrying" in str(excinfo.value)
     fake_snap7.cpu_status = 0x04
     observed, _ = await make_client().set_cpu_state("stop")
     assert observed["mode"] == "STOP"
@@ -326,3 +328,24 @@ def test_ctypes_byref_exposes_the_buffer() -> None:
     value = ctypes.c_int(0)
     ctypes.byref(value)._obj.value = 7
     assert value.value == 7
+
+
+async def test_link_error_after_a_write_was_sent_is_not_retried(fake_snap7: type[FakeClient]) -> None:
+    client = make_client(max_retries=3)
+    await client.ensure_connection()
+    fake_snap7.script = [None, LINK_ERROR]  # probe read succeeds, the write's reply is lost
+    with pytest.raises(OperationFailedError, match="may have been applied; check before retrying") as excinfo:
+        await client.write_db(1, 0, b"\x01")
+    assert (excinfo.value.outcome, excinfo.value.request_sent) == ("unknown", True)
+    writes = [call for fake in fake_snap7.instances for call in fake.calls if call[0] == "write_area"]
+    assert len(writes) == 1
+
+
+async def test_link_error_in_the_probe_reconnects_before_writing(fake_snap7: type[FakeClient]) -> None:
+    client = make_client(max_retries=3)
+    await client.ensure_connection()
+    fake_snap7.script = [LINK_ERROR, None, None]  # stale link found by the probe
+    meta = await client.write_db(1, 0, b"\x01")
+    assert meta["attempts"] == 2
+    writes = [call for fake in fake_snap7.instances for call in fake.calls if call[0] == "write_area"]
+    assert len(writes) == 1 and len(fake_snap7.instances) == 2

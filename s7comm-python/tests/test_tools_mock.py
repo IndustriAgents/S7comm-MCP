@@ -420,7 +420,7 @@ async def test_batch_write_checks_every_target_before_writing(make_server: Serve
         ],
     )
     assert result["success"] is False and result["error"].startswith("Nothing was written: 2 of 3")
-    assert result["meta"] == {"count": 3, "written": 0}
+    assert result["meta"] == {"count": 3, "written": 0, "outcome": "not_sent", "request_sent": False}
     first, missing, out_of_range = result["data"]["results"]
     assert first["skipped"] is True
     assert "Item not available" in missing["error"] and "Address out of range" in out_of_range["error"]

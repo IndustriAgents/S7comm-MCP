@@ -117,7 +117,21 @@ class S7ConnectionError(S7ClientError):
 
 
 class OperationFailedError(S7ClientError):
-    """Raised when an S7 operation fails (after retries, for link errors)."""
+    """Raised when an S7 operation fails (after retries, for link errors).
+
+    ``outcome`` says what happened to a write or CPU command: ``not_sent``
+    (refused or failed before the request went out), ``rejected`` (the PLC
+    answered with an error, so nothing was applied) or ``unknown`` (sent, but
+    no usable answer; it may have been applied).
+    """
+
+    def __init__(self, message: str, *, outcome: str = "not_sent") -> None:
+        super().__init__(message)
+        self.outcome = outcome
+
+    @property
+    def request_sent(self) -> bool:
+        return self.outcome in ("rejected", "unknown")
 
 
 class WriteOutcomeUnknownError(OperationFailedError):
@@ -125,6 +139,9 @@ class WriteOutcomeUnknownError(OperationFailedError):
 
     The PLC may or may not have applied it. It is never resent automatically.
     """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, outcome="unknown")
 
 
 #: Areas the client will write to. Process-image inputs are read-only.
@@ -378,7 +395,8 @@ class S7Client:
         if observed["mode"] != normalized:
             raise OperationFailedError(
                 f"The PLC accepted the {normalized} command but still reports {observed['state']} "
-                f"after {self.config.timeout:g}s"
+                f"after {self.config.timeout:g}s; it may still be changing mode, check before retrying",
+                outcome="unknown",
             )
         return observed, meta
 
@@ -492,13 +510,15 @@ class S7Client:
                     if not is_link_error(exc):
                         # The PLC (or argument checking) rejected this request;
                         # the connection is still fine, so report it unchanged.
-                        raise OperationFailedError(f"{op_name} failed: {message}") from exc
+                        raise OperationFailedError(
+                            f"{op_name} failed: {message}", outcome="rejected" if sent else "not_sent"
+                        ) from exc
                     self._reset_locked()
                     if sent:
                         self._last_error = f"{op_name}: no reply ({message}); may have been applied"
                         raise WriteOutcomeUnknownError(
-                            f"{op_name}: no reply from the PLC ({message}). The request was sent once and may "
-                            "have been applied; it was not resent. Read the value back before trying again."
+                            f"{op_name}: no reply from the PLC ({message}). The request was sent once and "
+                            "may have been applied; check before retrying. It was not resent."
                         ) from exc
                     if attempt > self.config.max_retries:
                         error_cls = S7ConnectionError if isinstance(exc, S7ConnectionError) else OperationFailedError
