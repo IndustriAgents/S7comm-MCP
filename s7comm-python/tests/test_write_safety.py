@@ -172,3 +172,53 @@ def test_startup_warns_when_system_commands_lack_writes(
     with caplog.at_level("WARNING", logger="s7comm_mcp"):
         S7CommMCPServer()
     assert "S7_SYSTEM_CMDS_ENABLED=true has no effect while S7_WRITES_ENABLED is false" in caplog.text
+
+
+# ----------------------------------------------- finding 4: inputs are read-only
+
+
+async def test_batch_write_to_inputs_is_refused(make_server: ServerFactory) -> None:
+    server = make_server()
+    await assert_refused_and_unchanged(
+        server,
+        "write_multiple_vars",
+        {"variables": [{"area": "input", "byte": 3, "value": "ff"}]},
+        "Nothing was written",
+        "input",
+        3,
+    )
+    result = await call(server, "write_multiple_vars", variables=[{"area": "I", "byte": 3, "value": "ff"}])
+    assert "read-only" in result["data"]["results"][0]["error"]
+
+
+async def test_bool_batch_write_to_an_input_bit_is_refused(make_server: ServerFactory) -> None:
+    server = make_server()
+    await assert_refused_and_unchanged(
+        server,
+        "write_multiple_vars",
+        {"variables": [{"area": "input", "byte": 3, "bit": 2, "data_type": "BOOL", "value": True}]},
+        "Nothing was written",
+        "input",
+        3,
+    )
+
+
+async def test_tag_write_to_inputs_is_refused(make_server: ServerFactory, tmp_path: Path) -> None:
+    tags = tmp_path / "tags.json"
+    tags.write_text(json.dumps({"Sensor": {"area": "input", "byte": 3, "data_type": "BYTE"}}))
+    server = make_server(tag_map=tags)
+    await assert_refused_and_unchanged(server, "write_tag", {"name": "Sensor", "value": 255}, "read-only", "input", 3)
+    assert (await call(server, "read_tag", name="Sensor"))["success"] is True  # reading is fine
+
+
+async def test_client_refuses_input_writes(mock_plc: MockPLC) -> None:
+    client = S7Client(S7ClientConfig(host=mock_plc.host, port=mock_plc.port, max_retries=0))
+    try:
+        with pytest.raises(ValueError, match="read-only"):
+            await client.write_area("input", 3, b"\xff")
+        with pytest.raises(ValueError, match="read-only"):
+            await client.write_bit("input", 3, 0, True)
+        payload, _ = await client.read_area("input", 3, 1)
+        assert payload == b"\x00"
+    finally:
+        await client.close()

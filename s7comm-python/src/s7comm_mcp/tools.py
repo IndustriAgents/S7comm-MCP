@@ -512,7 +512,12 @@ class PreparedWrite:
     flag: bool = False
 
 
+INPUTS_READ_ONLY = "Inputs (I / PE area) are read-only: the process image is written by the input modules"
+
+
 def prepare_write(addr: Address, value: Any) -> PreparedWrite:
+    if addr.area == "input":
+        raise ValueError(INPUTS_READ_ONLY)
     dtype = addr.data_type
     if dtype == "BOOL":
         if addr.bit is None:

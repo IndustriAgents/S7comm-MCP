@@ -120,6 +120,17 @@ class OperationFailedError(S7ClientError):
     """Raised when an S7 operation fails (after retries, for link errors)."""
 
 
+#: Areas the client will write to. Process-image inputs are read-only.
+WRITABLE_AREAS = frozenset({"db", "output", "marker"})
+
+
+def writable_area_for(name: str) -> Area:
+    area = area_for(name)
+    if name not in WRITABLE_AREAS:
+        raise ValueError(f"Area '{name}' is read-only; writable areas: {', '.join(sorted(WRITABLE_AREAS))}")
+    return area
+
+
 def area_for(name: str) -> Area:
     """Map a tool-level area name to the python-snap7 ``Area`` enum."""
     try:
@@ -270,7 +281,7 @@ class S7Client:
     async def write_area(self, area: str, start: int, payload: bytes, db_number: int = 0) -> OperationMeta:
         if not payload:
             raise ValueError("payload must not be empty")
-        area_enum = area_for(area)
+        area_enum = writable_area_for(area)
         label = f"write_area(area={area},db={db_number},start={start},size={len(payload)})"
         _, meta = await anyio.to_thread.run_sync(
             self._execute,
@@ -283,7 +294,7 @@ class S7Client:
         """Write one bit with the S7 BIT transport size; the other 7 bits are untouched."""
         if not 0 <= bit <= 7:
             raise ValueError("bit index must be between 0 and 7")
-        area_enum = area_for(area)
+        area_enum = writable_area_for(area)
         label = f"write_bit(area={area},db={db_number},byte={byte_offset},bit={bit})"
         _, meta = await anyio.to_thread.run_sync(
             self._execute,
