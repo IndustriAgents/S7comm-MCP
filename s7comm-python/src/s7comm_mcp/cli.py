@@ -16,12 +16,11 @@ import logging
 import os
 import sys
 import tomllib
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from dotenv import dotenv_values
 
-from .config import ConfigError
+from .config import PROJECT_NAME, ConfigError, package_version
 from .server import S7CommMCPServer
 
 logger = logging.getLogger("s7comm_mcp")
@@ -29,14 +28,6 @@ logger = logging.getLogger("s7comm_mcp")
 #: Variables that enable writes or commands. Never taken from an implicit .env.
 GATE_VARIABLES = ("S7_WRITES_ENABLED", "S7_SYSTEM_CMDS_ENABLED")
 _FALSE_VALUES = {"", "0", "false", "no", "n", "off"}
-PROJECT_NAME = "s7comm-mcp"
-
-
-def package_version() -> str:
-    try:
-        return version(PROJECT_NAME)
-    except PackageNotFoundError:  # pragma: no cover - running from an uninstalled tree
-        return "0+unknown"
 
 
 def find_env_file(start: Path | None = None) -> Path | None:

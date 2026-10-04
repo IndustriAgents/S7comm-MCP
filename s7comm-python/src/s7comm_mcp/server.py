@@ -13,6 +13,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ContentBlock
 from pydantic import ValidationError
 
+from .config import package_version
 from .s7_client import S7Client
 from .tools import TagMap, ToolConfig, ToolResources, fail, register_tools
 
@@ -93,6 +94,9 @@ class S7CommMCPServer:
             dependencies=["python-snap7"],
             lifespan=self._lifespan,
         )
+        # FastMCP has no version argument; without this, serverInfo.version
+        # would be the mcp SDK's version instead of this server's.
+        self._mcp._mcp_server.version = package_version()
         register_tools(self._mcp, self.resources)
 
     def run(self) -> None:

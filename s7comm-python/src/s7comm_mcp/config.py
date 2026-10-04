@@ -8,9 +8,20 @@ helpers are called by :class:`~s7comm_mcp.server.S7CommMCPServer` after
 from __future__ import annotations
 
 import os
+from importlib.metadata import PackageNotFoundError, version
+
+PROJECT_NAME = "s7comm-mcp"
 
 _TRUE = {"1", "true", "yes", "y", "on"}
 _FALSE = {"0", "false", "no", "n", "off", ""}
+
+
+def package_version() -> str:
+    """This package's installed version (reported as serverInfo.version)."""
+    try:
+        return version(PROJECT_NAME)
+    except PackageNotFoundError:  # pragma: no cover - running from an uninstalled tree
+        return "0+unknown"
 
 
 class ConfigError(ValueError):

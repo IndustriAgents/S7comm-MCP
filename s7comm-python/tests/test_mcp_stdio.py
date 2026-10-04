@@ -8,6 +8,7 @@ stdout carries nothing but JSON-RPC.
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import inspect
 import json
 import subprocess
@@ -65,6 +66,17 @@ async def mcp_session(env: dict[str, str], errlog: Any = None) -> AsyncIterator[
         async with ClientSession(read, write) as session:
             await session.initialize()
             yield Session(session)
+
+
+async def test_server_info_reports_the_package_version(mock_plc: MockPLC) -> None:
+    params = StdioServerParameters(
+        command=SERVER_COMMAND[0], args=SERVER_COMMAND[1:], env=server_env(mock_plc.port), cwd=SERVER_ROOT
+    )
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        init = await session.initialize()
+    assert init.serverInfo.name == "S7comm MCP Server"
+    assert init.serverInfo.version == importlib.metadata.version("s7comm-mcp")
+    assert init.serverInfo.version != importlib.metadata.version("mcp")
 
 
 async def test_tools_list_has_a_description_for_every_tool(mock_plc: MockPLC) -> None:
