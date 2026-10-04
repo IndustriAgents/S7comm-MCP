@@ -321,3 +321,14 @@ def test_an_installed_package_has_no_implicit_env_file(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("S7_HOST=untrusted\n")
     (site.parent / ".env").write_text("S7_HOST=untrusted\n")
     assert find_env_file(site / "cli.py") is None
+
+
+def test_an_installed_copy_inside_a_checkout_reads_no_env_file(tmp_path: Path) -> None:
+    # Review round 3: a venv inside s7comm-python/ (or any dir whose pyproject is
+    # named s7comm-mcp) used to make the installed copy read that .env.
+    project = make_project(tmp_path)
+    (project / ".env").write_text("S7_HOST=checkout\n")
+    for packages in ("site-packages", "dist-packages"):
+        installed = project / ".venv" / "lib" / "python3.11" / packages / "s7comm_mcp"
+        installed.mkdir(parents=True)
+        assert find_env_file(installed / "cli.py") is None

@@ -39,12 +39,17 @@ def find_env_file(start: Path | None = None) -> Path | None:
     Walks up from the ``s7comm_mcp`` package to the nearest ``pyproject.toml``.
     If that file belongs to this project (a source checkout, ``uv sync``), its
     directory's ``.env`` is used. Any other project, or none (an installed
-    package), means there is no implicit ``.env``; use ``--env-file``. The
-    search never looks at the working directory or above the project.
+    package), means there is no implicit ``.env``; use ``--env-file``. A
+    package under ``site-packages`` or ``dist-packages`` is an installed copy
+    and never has one, even inside a directory whose pyproject is named
+    s7comm-mcp. The search never looks at the working directory or above the
+    project.
     """
     directory = (start or Path(__file__)).resolve()
     if directory.is_file():
         directory = directory.parent
+    if any(part in ("site-packages", "dist-packages") for part in directory.parts):
+        return None  # an installed package: there is no implicit .env
     for candidate_dir in (directory, *directory.parents):
         pyproject = candidate_dir / "pyproject.toml"
         if not pyproject.is_file():
