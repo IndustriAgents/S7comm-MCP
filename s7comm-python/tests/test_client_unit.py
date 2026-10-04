@@ -7,6 +7,7 @@ import ctypes
 import json
 import threading
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import anyio
@@ -628,3 +629,67 @@ def test_s7_timeout_must_be_below_the_request_deadline() -> None:
     with pytest.raises(ConfigError, match="must be smaller than S7_REQUEST_DEADLINE"):
         S7ClientConfig(timeout=60, request_deadline=45)
     assert S7ClientConfig(timeout=5, request_deadline=6).timeout == 5
+
+
+# ------------------------------------------------------------- cancel race (suite rule, Modbus review)
+
+
+async def test_cancel_in_the_same_step_as_the_lock_release_never_sends(fake_snap7: type[FakeClient]) -> None:
+    """The client cancels exactly when the lock passes to the queued write.
+
+    mcp's RequestResponder.cancel() cancels the request's anyio scope at once,
+    but CancelledError reaches _run only on a later event-loop step. The write's
+    worker thread, just granted the lock, must still not send.
+    """
+    sends = 0
+    for _ in range(40):
+        fake_snap7.instances.clear()
+        client = make_client(timeout=5.0)
+        holder: dict[str, anyio.CancelScope] = {}
+        lock_held = threading.Event()
+
+        def hold_then_cancel(lock_held: threading.Event = lock_held, holder: dict[str, Any] = holder) -> None:
+            lock_held.set()
+            time.sleep(0.05)
+            # The cancel and the lock release happen in the same step.
+            anyio.from_thread.run_sync(holder["scope"].cancel)
+
+        fake_snap7.script = [hold_then_cancel]
+        reader = asyncio.create_task(client.read_db(1, 0, 1))
+        while not lock_held.is_set():
+            await asyncio.sleep(0.001)
+        with anyio.CancelScope() as scope:  # stands in for the MCP request's scope
+            holder["scope"] = scope
+            with client.tool_call(scope):
+                await client.write_db(1, 0, b"\x5a")
+        await reader
+        time.sleep(0.05)  # let the abandoned write worker reach its send check
+        sends += all_calls(fake_snap7, "write_area")
+        fake_snap7.script = []
+    assert sends == 0
+
+
+async def test_cancel_flag_set_before_the_lock_is_granted_blocks_the_send(fake_snap7: type[FakeClient]) -> None:
+    """Deterministic variant: cancel_called is set, CancelledError never arrives."""
+    for _ in range(20):
+        fake_snap7.instances.clear()
+        client = make_client(timeout=5.0)
+        scope = SimpleNamespace(cancel_called=False)  # what RequestResponder.cancel() flips
+        lock_held = threading.Event()
+
+        def hold_then_flag(lock_held: threading.Event = lock_held, scope: Any = scope) -> None:
+            lock_held.set()
+            time.sleep(0.02)
+            scope.cancel_called = True  # set just before the lock goes to the write
+
+        fake_snap7.script = [hold_then_flag]
+        reader = asyncio.create_task(client.read_db(1, 0, 1))
+        while not lock_held.is_set():
+            await asyncio.sleep(0.001)
+        with client.tool_call(scope):
+            with pytest.raises(OperationFailedError) as excinfo:
+                await client.write_db(1, 0, b"\x5a")
+        await reader
+        assert excinfo.value.outcome == "not_sent"
+        assert all_calls(fake_snap7, "write_area") == 0
+        fake_snap7.script = []

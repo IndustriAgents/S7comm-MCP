@@ -297,6 +297,8 @@ def _identity_from_szl(records_hex: list[str]) -> tuple[str | None, str | None]:
 
 #: When the current MCP tool call started (time.monotonic()); see S7Client.tool_call().
 _TOOL_CALL_STARTED: ContextVar[float | None] = ContextVar("s7comm_tool_call_started", default=None)
+#: The MCP request's cancel scope for the current tool call, if known.
+_TOOL_CALL_CANCEL_SCOPE: ContextVar[Any | None] = ContextVar("s7comm_tool_call_cancel_scope", default=None)
 
 
 class _Call:
@@ -307,18 +309,30 @@ class _Call:
     one lock, whether the request went out before the caller gave up. A send
     attempted after ``not_after`` (the tool call's absolute deadline) is also
     refused.
+
+    ``cancel_scope`` is the MCP request's cancel scope. When the client cancels,
+    the SDK sets its ``cancel_called`` at once, but CancelledError reaches the
+    caller (and so :meth:`cancel`) only on a later event-loop step; meanwhile
+    this worker thread may already hold the lock. Reading the flag here closes
+    that window. It is a plain bool, safe to read from this thread.
     """
 
-    def __init__(self, not_after: float = math.inf) -> None:
+    def __init__(self, not_after: float = math.inf, cancel_scope: Any | None = None) -> None:
         self._lock = threading.Lock()
         self.not_after = not_after
+        self.cancel_scope = cancel_scope
         self.cancelled = False
         self.expired = False
         self.sent = False
 
+    def is_cancelled(self) -> bool:
+        if not self.cancelled and getattr(self.cancel_scope, "cancel_called", False):
+            self.cancelled = True
+        return self.cancelled
+
     def begin_send(self) -> bool:
         with self._lock:
-            if self.cancelled:
+            if self.is_cancelled():
                 return False
             if time.monotonic() >= self.not_after:
                 self.cancelled = self.expired = True
@@ -400,7 +414,7 @@ class S7Client:
         return min(worst_case, cap)
 
     @contextmanager
-    def tool_call(self) -> Iterator[None]:
+    def tool_call(self, cancel_scope: Any | None = None) -> Iterator[None]:
         """Scope of one MCP tool call: all its PLC requests share one absolute deadline.
 
         A tool call may make several requests (a STRING header read and the
@@ -408,15 +422,20 @@ class S7Client:
         poll). The deadline counts from the start of the call, including any
         wait for the client lock, and is never restarted per request. Nested
         scopes keep the outermost start.
+
+        ``cancel_scope`` is the MCP request's cancel scope: once the client
+        cancels, no request of this call is sent any more (see :class:`_Call`).
         """
         if _TOOL_CALL_STARTED.get() is not None:
             yield
             return
-        token = _TOOL_CALL_STARTED.set(time.monotonic())
+        started = _TOOL_CALL_STARTED.set(time.monotonic())
+        scope = _TOOL_CALL_CANCEL_SCOPE.set(cancel_scope)
         try:
             yield
         finally:
-            _TOOL_CALL_STARTED.reset(token)
+            _TOOL_CALL_CANCEL_SCOPE.reset(scope)
+            _TOOL_CALL_STARTED.reset(started)
 
     async def _run(
         self,
@@ -439,7 +458,7 @@ class S7Client:
             started = time.monotonic()
         deadline = self.request_deadline(size)
         not_after = started + deadline
-        call = _Call(not_after)
+        call = _Call(not_after, _TOOL_CALL_CANCEL_SCOPE.get())
         with self._calls_lock:
             if self._closing:
                 raise OperationFailedError(f"{op_name}: the MCP client disconnected; the request was not sent")
@@ -764,7 +783,7 @@ class S7Client:
             attempt += 1
             sent = False
             try:
-                if call is not None and call.cancelled:
+                if call is not None and call.is_cancelled():
                     raise _Abandoned
                 if not self._connected:
                     self._connect_locked()
