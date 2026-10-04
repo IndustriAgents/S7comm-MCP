@@ -7,6 +7,7 @@ import ctypes
 import json
 import threading
 import time
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
 
@@ -693,3 +694,91 @@ async def test_cancel_flag_set_before_the_lock_is_granted_blocks_the_send(fake_s
         assert excinfo.value.outcome == "not_sent"
         assert all_calls(fake_snap7, "write_area") == 0
         fake_snap7.script = []
+
+
+async def test_same_step_cancel_through_the_sdk_keeps_the_server_answering(
+    fake_snap7: type[FakeClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real RequestResponder.cancel() in the step that hands the lock to a queued write.
+
+    The SDK answers "Request cancelled" itself. The tool must then end as a
+    cancellation, not return an envelope: a second answer would trip the SDK's
+    `assert not self._completed` and could take the whole server down. Afterwards
+    the server must still answer, and no write may have been sent.
+    """
+    from mcp.shared.exceptions import McpError
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    from s7comm_mcp.server import S7CommMCPServer
+    from s7comm_mcp.tools import ToolConfig
+
+    server = S7CommMCPServer(client=make_client(timeout=5.0), tool_config=ToolConfig(writes_enabled=True))
+    responders: list[Any] = []
+    real_tool_call = S7Client.tool_call
+
+    @contextmanager
+    def recording(self: S7Client, cancel_scope: Any | None = None) -> Any:
+        context = server._mcp._mcp_server.request_context
+        responders.append(context.session._in_flight[context.request_id])
+        with real_tool_call(self, cancel_scope):
+            yield
+
+    monkeypatch.setattr(S7Client, "tool_call", recording)
+    cancelled_answers: list[str] = []
+
+    async def write(session: Any) -> None:
+        try:
+            await session.call_tool("write_db", {"db_number": 1, "start_offset": 0, "value": "5a"})
+        except McpError as exc:
+            cancelled_answers.append(str(exc))
+
+    async with create_connected_server_and_client_session(server._mcp._mcp_server) as session:
+        for _ in range(20):
+            responders.clear()
+            lock_held = threading.Event()
+
+            def hold_then_cancel(lock_held: threading.Event = lock_held) -> None:
+                lock_held.set()
+                while len(responders) < 2:  # wait until the write's tool call is underway
+                    time.sleep(0.001)
+                # The SDK's own cancel, run on the event loop, in the step that releases the lock.
+                anyio.from_thread.run(responders[1].cancel)
+
+            fake_snap7.script = [hold_then_cancel]
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(session.call_tool, "read_db", {"db_number": 1, "start_offset": 0, "size": 1})
+                while not lock_held.is_set():
+                    await anyio.sleep(0.001)
+                tg.start_soon(write, session)
+            with anyio.fail_after(5):  # the server still answers on the same session
+                status = await session.call_tool("get_connection_status", {})
+            assert status.structuredContent and status.structuredContent["success"] is True
+            fake_snap7.script = []
+    assert cancelled_answers == ["Request cancelled"] * 20
+    assert all_calls(fake_snap7, "write_area") == 0
+
+
+async def test_a_refusal_after_the_mcp_cancel_ends_as_a_cancellation(
+    fake_snap7: type[FakeClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal reaches _run because anyio did not interrupt the wait (its waiter
+    had already completed). The tool must end as a cancellation, not with an
+    envelope, which would be a second answer to an already answered request."""
+    real_run_sync = anyio.to_thread.run_sync
+
+    async def waiter_not_interrupted(*args: Any, **kwargs: Any) -> Any:
+        with anyio.CancelScope(shield=True):
+            return await real_run_sync(*args, **kwargs)
+
+    monkeypatch.setattr(s7_client.anyio.to_thread, "run_sync", waiter_not_interrupted)
+    client = make_client(timeout=5.0)
+    returned_an_error_envelope = False
+    with anyio.CancelScope() as scope:  # stands in for the MCP request's scope
+        with client.tool_call(scope):
+            scope.cancel()  # RequestResponder.cancel(): flag set, answer already sent
+            try:
+                await client.write_db(1, 0, b"\x5a")
+            except OperationFailedError:
+                returned_an_error_envelope = True
+    assert scope.cancelled_caught and not returned_an_error_envelope
+    assert all_calls(fake_snap7, "write_area") == 0

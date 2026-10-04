@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import anyio
+import anyio.lowlevel
 import snap7
 from snap7.error import check_error
 from snap7.type import Area, Parameter, WordLen
@@ -323,11 +324,12 @@ class _Call:
         self.cancel_scope = cancel_scope
         self.cancelled = False
         self.expired = False
+        self.mcp_cancelled = False
         self.sent = False
 
     def is_cancelled(self) -> bool:
         if not self.cancelled and getattr(self.cancel_scope, "cancel_called", False):
-            self.cancelled = True
+            self.cancelled = self.mcp_cancelled = True
         return self.cancelled
 
     def begin_send(self) -> bool:
@@ -469,6 +471,13 @@ class S7Client:
                     self._execute, op_name, operation, probe, single_pdu, call, abandon_on_cancel=True
                 )
         except _Abandoned:
+            if call.mcp_cancelled:
+                # The SDK has already answered this request with "Request
+                # cancelled"; a second answer (an envelope) would trip its
+                # `assert not self._completed`. End as a real cancellation,
+                # which the SDK expects and suppresses.
+                logger.warning("%s: the MCP client cancelled the call; nothing was sent", op_name)
+                await anyio.lowlevel.checkpoint_if_cancelled()
             if call.expired:
                 raise OperationFailedError(
                     f"{op_name}: the tool call's {deadline:g}s deadline passed before the request could be sent; "
