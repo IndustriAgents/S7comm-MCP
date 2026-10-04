@@ -417,3 +417,36 @@ async def test_batch_reports_the_outcome_per_entry(make_server: ServerFactory) -
     )
     assert result["success"] is True and outcome(result) == ("written", True)
     assert [(r["outcome"], r["request_sent"]) for r in result["data"]["results"]] == [("written", True)] * 2
+
+
+# ----------------------------------------------- rule 7: strict argument types
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("read_db", {"db_number": True, "start_offset": 0, "size": 1}),
+        ("read_db", {"db_number": 1, "start_offset": "4", "size": 1}),
+        ("read_db", {"db_number": 1, "start_offset": 4.0, "size": 1}),
+        ("read_input", {"start_byte": 0, "size": True}),
+        ("write_output", {"start_byte": 1, "value": True, "data_type": "BOOL", "bit_index": True}),
+        ("read_szl", {"szl_id": True}),
+    ],
+)
+async def test_tool_integers_are_strict(make_server: ServerFactory, tool: str, args: dict[str, Any]) -> None:
+    result = await call(make_server(), tool, **args)
+    assert result["success"] is False and result["error"].startswith("Invalid arguments"), result
+
+
+async def test_bool_value_must_be_a_boolean(make_server: ServerFactory) -> None:
+    server = make_server()
+    assert (await call(server, "write_output", start_byte=1, value="00"))["success"]
+    for value in ("true", 1, "false"):
+        await assert_refused_and_unchanged(
+            server,
+            "write_output",
+            {"start_byte": 1, "value": value, "data_type": "BOOL", "bit_index": 0},
+            "JSON boolean",
+            "output",
+            1,
+        )

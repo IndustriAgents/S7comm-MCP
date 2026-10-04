@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import StrictInt
 
 from .config import env_bool, env_str
 from .s7_client import (
@@ -203,24 +204,13 @@ class ToolResources:
 
 
 def int_arg(value: Any, name: str, minimum: int, maximum: int) -> int:
-    """Strictly convert ``value`` to an int in ``[minimum, maximum]``."""
-    if isinstance(value, bool) or value is None:
-        raise ValueError(f"{name} must be an integer")
-    if isinstance(value, float):
-        if not value.is_integer():
-            raise ValueError(f"{name} must be a whole number, got {value}")
-        value = int(value)
-    elif isinstance(value, str):
-        text = value.strip()
-        try:
-            value = int(text, 10)
-        except ValueError:
-            try:
-                value = int(text, 0)  # 0x.. / 0b.. literals
-            except ValueError:
-                raise ValueError(f"{name} must be an integer, got {text!r}") from None
-    elif not isinstance(value, int):
-        raise ValueError(f"{name} must be an integer, got {type(value).__name__}")
+    """Return ``value`` if it is a real integer in ``[minimum, maximum]``.
+
+    Strict: booleans, strings and floats (even 4.0) are refused rather than
+    converted, so true never becomes 1 and "12" never becomes 12.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer, got {type(value).__name__} {value!r}")
     if not minimum <= value <= maximum:
         raise ValueError(f"{name} must be between {minimum} and {maximum}, got {value}")
     return value
@@ -356,17 +346,10 @@ def address_from_spec(spec: Any) -> Address:
 
 
 def parse_bool(value: Any) -> bool:
+    """Strict: only a JSON boolean (not 1, "true" or "false")."""
     if isinstance(value, bool):
         return value
-    if isinstance(value, (int, float)) and value in (0, 1):
-        return bool(value)
-    if isinstance(value, str):
-        text = value.strip().lower()
-        if text in {"true", "1", "on", "yes"}:
-            return True
-        if text in {"false", "0", "off", "no"}:
-            return False
-    raise ValueError(f"BOOL value must be true or false, got {value!r}")
+    raise ValueError(f"BOOL value must be true or false (a JSON boolean), got {type(value).__name__} {value!r}")
 
 
 def _float32_shortest(value: float) -> float:
@@ -392,12 +375,9 @@ def decode_scalar(payload: bytes, dtype: str, bit: int | None = None) -> Any:
 
 def encode_scalar(value: Any, dtype: str) -> bytes:
     if dtype == "REAL":
-        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-            raise ValueError(f"REAL value must be a number, got {value!r}")
-        try:
-            number = float(value)
-        except ValueError:
-            raise ValueError(f"REAL value must be a number, got {value!r}") from None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"REAL value must be a number, got {type(value).__name__} {value!r}")
+        number = float(value)
         if not math.isfinite(number) or abs(number) > FLOAT32_MAX:
             raise ValueError(f"REAL value must be finite and within +/-{FLOAT32_MAX:g}, got {value!r}")
         return struct.pack(">f", number)
@@ -658,7 +638,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
     # -----------------------------
 
     @tool
-    async def read_db(db_number: int, start_offset: int, size: int) -> Envelope:
+    async def read_db(db_number: StrictInt, start_offset: StrictInt, size: StrictInt) -> Envelope:
         """Read raw bytes from a Siemens data block (DB).
 
         Returns the bytes as hex in data.raw_bytes_hex. Absolute offsets need a DB
@@ -673,12 +653,12 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
 
     @tool
     async def read_db_typed(
-        db_number: int,
-        start_offset: int,
+        db_number: StrictInt,
+        start_offset: StrictInt,
         data_type: str,
-        size: int | None = None,
-        bit_index: int | None = None,
-        string_length: int | None = None,
+        size: StrictInt | None = None,
+        bit_index: StrictInt | None = None,
+        string_length: StrictInt | None = None,
     ) -> Envelope:
         """Read one typed value from a data block and decode it.
 
@@ -705,13 +685,13 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
 
     @tool
     async def write_db(
-        db_number: int,
-        start_offset: int,
+        db_number: StrictInt,
+        start_offset: StrictInt,
         value: Any,
         data_type: str | None = None,
-        size: int | None = None,
-        bit_index: int | None = None,
-        string_length: int | None = None,
+        size: StrictInt | None = None,
+        bit_index: StrictInt | None = None,
+        string_length: StrictInt | None = None,
     ) -> Envelope:
         """Write a typed value or raw bytes into a data block. Disabled unless S7_WRITES_ENABLED=true.
 
@@ -747,7 +727,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
     # -----------------------------
 
     @tool
-    async def read_input(start_byte: int, size: int) -> Envelope:
+    async def read_input(start_byte: StrictInt, size: StrictInt) -> Envelope:
         """Read process-image inputs (I / PE area) as raw bytes.
 
         Args:
@@ -757,7 +737,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         return await _read({"area": "input", "offset": start_byte}, size=size)
 
     @tool
-    async def read_output(start_byte: int, size: int) -> Envelope:
+    async def read_output(start_byte: StrictInt, size: StrictInt) -> Envelope:
         """Read process-image outputs (Q / PA area) as raw bytes.
 
         Args:
@@ -768,12 +748,12 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
 
     @tool
     async def write_output(
-        start_byte: int,
+        start_byte: StrictInt,
         value: Any,
         data_type: str | None = None,
-        size: int | None = None,
-        bit_index: int | None = None,
-        string_length: int | None = None,
+        size: StrictInt | None = None,
+        bit_index: StrictInt | None = None,
+        string_length: StrictInt | None = None,
     ) -> Envelope:
         """Write process-image outputs (Q area). Disabled unless S7_WRITES_ENABLED=true.
 
@@ -799,7 +779,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         )
 
     @tool
-    async def read_marker(start_byte: int, size: int) -> Envelope:
+    async def read_marker(start_byte: StrictInt, size: StrictInt) -> Envelope:
         """Read marker (bit memory, M / MK area) bytes.
 
         Args:
@@ -810,12 +790,12 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
 
     @tool
     async def write_marker(
-        start_byte: int,
+        start_byte: StrictInt,
         value: Any,
         data_type: str | None = None,
-        size: int | None = None,
-        bit_index: int | None = None,
-        string_length: int | None = None,
+        size: StrictInt | None = None,
+        bit_index: StrictInt | None = None,
+        string_length: StrictInt | None = None,
     ) -> Envelope:
         """Write marker memory (M area). Disabled unless S7_WRITES_ENABLED=true.
 
@@ -897,7 +877,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         return ok({"system_time": timestamp}, meta)
 
     @tool
-    async def read_szl(szl_id: int, szl_index: int = 0) -> Envelope:
+    async def read_szl(szl_id: StrictInt, szl_index: StrictInt = 0) -> Envelope:
         """Read a system status list (SZL/SSL) partial list.
 
         Returns the record length, record count and each record as hex. Common

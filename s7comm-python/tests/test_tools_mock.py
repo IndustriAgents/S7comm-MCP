@@ -201,7 +201,7 @@ async def test_bool_write_keeps_the_other_seven_bits(
     assert (await call(server, tool, **location, value="aa"))["success"]
     assert await raw(server, area, offset, db) == 0b1010_1010
 
-    steps = [(0, True, 0b1010_1011), (7, False, 0b0010_1011), (1, "false", 0b0010_1001), (6, 1, 0b0110_1001)]
+    steps = [(0, True, 0b1010_1011), (7, False, 0b0010_1011), (1, False, 0b0010_1001), (6, True, 0b0110_1001)]
     for bit, value, expected in steps:
         result = await call(server, tool, **location, value=value, data_type="BOOL", bit_index=bit)
         assert result["success"] is True, result

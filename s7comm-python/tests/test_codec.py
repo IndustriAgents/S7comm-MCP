@@ -13,6 +13,7 @@ from s7comm_mcp.tools import (
     decode_scalar,
     encode_scalar,
     encode_string_text,
+    int_arg,
     make_address,
     normalize_dtype,
     parse_bool,
@@ -106,6 +107,11 @@ def test_scalar_round_trip(dtype: str, value: float, encoded: bytes) -> None:
         ("REAL", 1e39),
         ("REAL", "abc"),
         ("REAL", None),
+        ("REAL", "1.5"),
+        ("REAL", True),
+        ("INT", "12"),
+        ("BYTE", 4.0),
+        ("DINT", False),
     ],
 )
 def test_scalar_encode_rejects_bad_values(dtype: str, value: object) -> None:
@@ -113,9 +119,24 @@ def test_scalar_encode_rejects_bad_values(dtype: str, value: object) -> None:
         encode_scalar(value, dtype)
 
 
-def test_integer_strings_are_accepted() -> None:
-    assert encode_scalar("0x10", "BYTE") == b"\x10"
-    assert encode_scalar("010", "INT") == b"\x00\x0a"
+@pytest.mark.parametrize("value", [True, False, "5", 5.0, [5]])
+def test_integers_must_be_real_ints(value: object) -> None:
+    # Strict: booleans are never integers, and strings/floats are not converted.
+    with pytest.raises(ValueError, match="must be an integer"):
+        int_arg(value, "offset", 0, 100)
+    with pytest.raises(ValueError, match="must be an integer"):
+        make_address("db", value, db_number=1)
+
+
+def test_batch_address_fields_are_strict() -> None:
+    with pytest.raises(ValueError, match="db_number must be an integer"):
+        address_from_spec({"db_number": True, "offset": 0})
+    with pytest.raises(ValueError, match="offset must be an integer"):
+        address_from_spec({"db_number": 1, "offset": "4"})
+    with pytest.raises(ValueError, match="bit_index must be an integer"):
+        address_from_spec({"db_number": 1, "offset": 0, "bit": True, "data_type": "BOOL"})
+    with pytest.raises(ValueError, match="must be an integer"):
+        raw_bytes([1, True])
 
 
 def test_real_decode_is_the_shortest_float32_repr() -> None:
@@ -129,27 +150,22 @@ def test_bool_decode_uses_the_bit() -> None:
     assert decode_scalar(b"\x02", "BOOL", 0) is False
 
 
-@pytest.mark.parametrize("value", [True, 1, "true", "ON", "1"])
-def test_parse_bool_true(value: object) -> None:
-    assert parse_bool(value) is True
+def test_parse_bool_accepts_json_booleans() -> None:
+    assert parse_bool(True) is True
+    assert parse_bool(False) is False
 
 
-@pytest.mark.parametrize("value", [False, 0, "false", "off", "0"])
-def test_parse_bool_false(value: object) -> None:
-    assert parse_bool(value) is False
-
-
-@pytest.mark.parametrize("value", ["maybe", 2, None, [1], "falsey"])
+@pytest.mark.parametrize("value", ["false", "true", "ON", 1, 0, 1.0, None, [1], "maybe"])
 def test_parse_bool_rejects_everything_else(value: object) -> None:
     # bool("false") is True in Python; the old code would have set the bit.
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="JSON boolean"):
         parse_bool(value)
 
 
 def test_bool_write_requires_a_bit_index() -> None:
     with pytest.raises(ValueError, match="bit_index"):
         prepare_write(make_address("output", 0, data_type="BOOL"), True)
-    prepared = prepare_write(make_address("output", 0, data_type="BOOL", bit=3), "false")
+    prepared = prepare_write(make_address("output", 0, data_type="BOOL", bit=3), False)
     assert (prepared.kind, prepared.flag) == ("bit", False)
 
 

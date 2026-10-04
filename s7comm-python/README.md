@@ -59,9 +59,9 @@ Invalid values (a port that is not a number, `S7_WRITES_ENABLED=enable`, an unkn
 
 ## Data types
 
-`read_db_typed`, `write_db`, `write_output`, `write_marker` and the batch and tag tools take `data_type` = `BOOL`, `BYTE`, `WORD`, `DWORD`, `INT`, `DINT`, `REAL` or `STRING`. Values are big-endian, as the PLC stores them, and range-checked before anything is sent.
+`read_db_typed`, `write_db`, `write_output`, `write_marker` and the batch and tag tools take `data_type` = `BOOL`, `BYTE`, `WORD`, `DWORD`, `INT`, `DINT`, `REAL` or `STRING`. Values are big-endian, as the PLC stores them, and range-checked before anything is sent. Types are strict: addresses, offsets, sizes, bit indexes, byte values and integer values must be JSON integers (never booleans, strings or `4.0`), and REAL values must be numbers.
 
-- `BOOL` uses `bit_index` 0-7 (reads default to bit 0; writes require it). A write changes only that bit, using the S7 BIT transport size, so the other seven bits of the byte are never rewritten. Values must be `true`/`false` (or `1`/`0`, `"true"`/`"false"`).
+- `BOOL` uses `bit_index` 0-7 (reads default to bit 0; writes require it). A write changes only that bit, using the S7 BIT transport size, so the other seven bits of the byte are never rewritten. Values must be JSON booleans (`true`/`false`); `1`, `"true"` and the like are refused.
 - `STRING` is the S7 `STRING[N]`: a max-length byte, a current-length byte, then the characters (Latin-1). Reads return only the text; `string_length` (the `N`) is optional and, if given, must match the header in the PLC. Writes require `string_length`, check it against the header, refuse text longer than `N`, and write the header plus the text.
 - Without `data_type`, writes take raw bytes: a hex string (`"0a ff"`) or a list of values 0-255.
 
