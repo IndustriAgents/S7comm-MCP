@@ -192,11 +192,35 @@ def test_bit_zero_is_not_treated_as_missing() -> None:
         ({"area": "output", "offset": 0, "db_number": 3}, "only applies"),
         ({"area": "timer", "offset": 0}, "Unsupported area"),
         ({"area": "db", "offset": -1, "db_number": 1}, "offset must be between"),
-        ({"area": "db", "offset": 0, "db_number": 1, "bit": 8}, "bit_index must be between"),
-        ({"area": "db", "offset": 0, "db_number": 1, "string_length": 255}, "string_length must be between"),
+        ({"area": "db", "offset": 0, "db_number": 1, "data_type": "BOOL", "bit": 8}, "bit_index must be between"),
+        (
+            {"area": "db", "offset": 0, "db_number": 1, "data_type": "STRING", "string_length": 255},
+            "string_length must be between",
+        ),
         ({"area": "db", "offset": 0, "db_number": 1, "size": 0}, "size must be between"),
+        # Parameters that do not apply to the data type are rejected, never ignored.
+        ({"area": "output", "offset": 2, "bit": 3}, "bit_index only applies to data_type BOOL"),
+        ({"area": "db", "offset": 0, "db_number": 1, "data_type": "BYTE", "bit": 0}, "only applies to data_type BOOL"),
+        (
+            {"area": "db", "offset": 0, "db_number": 1, "data_type": "REAL", "string_length": 4},
+            "only applies to data_type STRING",
+        ),
+        ({"area": "db", "offset": 0, "db_number": 1, "string_length": 4}, "only applies to data_type STRING"),
+        ({"area": "db", "offset": 0, "db_number": 1, "data_type": "STRING", "size": 4}, "use string_length"),
+        ({"area": "db", "offset": 0, "db_number": 1, "data_type": "REAL", "size": 2}, "does not match data_type REAL"),
     ],
 )
 def test_make_address_validation(kwargs: dict[str, object], message: str) -> None:
     with pytest.raises(ValueError, match=message):
         make_address(**kwargs)  # type: ignore[arg-type]
+
+
+def test_matching_size_is_accepted_for_typed_values() -> None:
+    assert make_address("db", 0, db_number=1, data_type="REAL", size=4).size == 4
+    assert make_address("output", 0, data_type="BOOL", bit=1, size=1).bit == 1
+
+
+def test_batch_entry_with_a_bit_but_no_bool_type_is_rejected() -> None:
+    # Reviewer's case: {"area": "output", "byte": 2, "bit": 6, "value": "40"} rewrote QB2 to 0x40.
+    with pytest.raises(ValueError, match="bit_index only applies to data_type BOOL"):
+        address_from_spec({"area": "output", "byte": 2, "bit": 6, "value": "40"})

@@ -282,11 +282,26 @@ def make_address(
         db = 0
     if offset is None:
         raise ValueError("an offset is required")
+    dtype = normalize_dtype(data_type) if data_type is not None else None
+    # A parameter that does not apply must not be silently ignored: a bit index
+    # on a raw or BYTE write would otherwise rewrite the whole byte.
+    if bit is not None and dtype != "BOOL":
+        raise ValueError(
+            "bit_index only applies to data_type BOOL"
+            + ("; without data_type the value is written as whole bytes" if dtype is None else f", not {dtype}")
+        )
+    if string_length is not None and dtype != "STRING":
+        raise ValueError("string_length only applies to data_type STRING")
+    if size is not None and dtype is not None:
+        if dtype == "STRING":
+            raise ValueError("size does not apply to data_type STRING; use string_length")
+        if int_arg(size, "size", 1, MAX_IO_BYTES) != TYPE_SIZES[dtype]:
+            raise ValueError(f"size={size} does not match data_type {dtype} ({TYPE_SIZES[dtype]} bytes)")
     return Address(
         area=area_name,
         offset=int_arg(offset, "offset", 0, MAX_BYTE_OFFSET),
         db_number=db,
-        data_type=normalize_dtype(data_type) if data_type is not None else None,
+        data_type=dtype,
         bit=int_arg(bit, "bit_index", 0, 7) if bit is not None else None,
         string_length=int_arg(string_length, "string_length", 1, STRING_MAX_CHARS)
         if string_length is not None
@@ -609,15 +624,15 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
             db_number: Data block number, 1-65535.
             start_offset: Byte offset of the value.
             data_type: One of the types above.
-            size: Ignored for typed reads; kept for compatibility.
-            bit_index: Bit 0-7 for BOOL (default 0).
+            size: Optional; if given it must equal the type's size (not used for STRING).
+            bit_index: Bit 0-7, BOOL only (default 0). Rejected for other types.
             string_length: For STRING, the declared N of STRING[N]. If omitted it is
                 taken from the header in the PLC; if given it must match it.
         """
-        del size  # the data type fixes the size
         return await _read(
             {"area": "db", "db_number": db_number, "offset": start_offset},
             data_type=data_type,
+            size=size,
             bit=bit_index,
             string_length=string_length,
         )
@@ -639,15 +654,17 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         that bit; the other 7 bits of the byte are left untouched. STRING needs
         string_length, which must match the STRING header in the PLC. Without
         data_type, value is raw bytes: a hex string ("0a ff") or a list of 0-255.
+        bit_index is only accepted with BOOL and string_length only with STRING;
+        to change a single bit, use data_type BOOL.
 
         Args:
             db_number: Data block number, 1-65535.
             start_offset: Byte offset to write at.
             value: The value to write.
             data_type: Optional type, see above.
-            size: For raw writes, the expected byte count (checked against value).
-            bit_index: Bit 0-7, required for BOOL.
-            string_length: N of STRING[N], required for STRING.
+            size: Optional expected byte count (checked against value or data_type).
+            bit_index: Bit 0-7, required for BOOL and rejected otherwise.
+            string_length: N of STRING[N], required for STRING and rejected otherwise.
         """
         return await _write(
             "write_db",
@@ -701,9 +718,9 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
             start_byte: Output byte (QB) to write at.
             value: The value to write.
             data_type: Optional BOOL, BYTE, WORD, DWORD, INT, DINT, REAL or STRING.
-            size: For raw writes, the expected byte count.
-            bit_index: Bit 0-7, required for BOOL.
-            string_length: N of STRING[N], required for STRING.
+            size: Optional expected byte count (checked against value or data_type).
+            bit_index: Bit 0-7, required for BOOL and rejected otherwise.
+            string_length: N of STRING[N], required for STRING and rejected otherwise.
         """
         return await _write(
             "write_output",
@@ -743,9 +760,9 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
             start_byte: Marker byte (MB) to write at.
             value: The value to write.
             data_type: Optional BOOL, BYTE, WORD, DWORD, INT, DINT, REAL or STRING.
-            size: For raw writes, the expected byte count.
-            bit_index: Bit 0-7, required for BOOL.
-            string_length: N of STRING[N], required for STRING.
+            size: Optional expected byte count (checked against value or data_type).
+            bit_index: Bit 0-7, required for BOOL and rejected otherwise.
+            string_length: N of STRING[N], required for STRING and rejected otherwise.
         """
         return await _write(
             "write_marker",
