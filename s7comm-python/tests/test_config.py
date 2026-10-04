@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from s7comm_mcp.cli import find_env_file
+from s7comm_mcp.cli import find_env_file, load_env_file
 from s7comm_mcp.config import ConfigError
 from s7comm_mcp.s7_client import S7Client, S7ClientConfig
 from s7comm_mcp.server import S7CommMCPServer
@@ -96,14 +97,103 @@ def test_server_starts_without_a_plc(clean_env: pytest.MonkeyPatch) -> None:
     assert server.client.connection_status()["connected"] is False
 
 
-def test_env_file_lookup_walks_up_from_the_package(tmp_path: Path) -> None:
-    project = tmp_path / "s7comm-python"
-    package = project / "src" / "s7comm_mcp"
-    package.mkdir(parents=True)
-    (tmp_path / ".env").write_text("S7_HOST=repo-root\n")
-    assert find_env_file(package / "cli.py") == tmp_path / ".env"
+def make_project(root: Path, name: str = "s7comm-mcp") -> Path:
+    project = root / "s7comm-python"
+    (project / "src" / "s7comm_mcp").mkdir(parents=True)
+    (project / "pyproject.toml").write_text(f'[project]\nname = "{name}"\n')
+    return project
+
+
+def test_implicit_env_file_is_the_project_one(tmp_path: Path) -> None:
+    project = make_project(tmp_path)
+    cli_py = project / "src" / "s7comm_mcp" / "cli.py"
+    (tmp_path / ".env").write_text("S7_HOST=repo-root\n")  # above the project: never used
+    assert find_env_file(cli_py) is None
     (project / ".env").write_text("S7_HOST=project\n")
-    assert find_env_file(package / "cli.py") == project / ".env"
+    assert find_env_file(cli_py) == project / ".env"
+
+
+def test_no_implicit_env_file_inside_another_project(tmp_path: Path) -> None:
+    # An installed package inside, say, the MCP client's project venv.
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "someone-elses-app"\n')
+    (tmp_path / ".env").write_text("S7_HOST=untrusted\n")
+    site = tmp_path / ".venv" / "lib" / "python3.11" / "site-packages" / "s7comm_mcp"
+    site.mkdir(parents=True)
+    assert find_env_file(site / "cli.py") is None
+
+
+def test_implicit_env_file_cannot_enable_writes(
+    tmp_path: Path, clean_env: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("S7_HOST=10.0.0.9\nS7_WRITES_ENABLED=true\nS7_SYSTEM_CMDS_ENABLED=1\n")
+    with caplog.at_level("WARNING", logger="s7comm_mcp"):
+        load_env_file(env_file, explicit=False)
+    assert os.environ["S7_HOST"] == "10.0.0.9"  # connection settings still apply
+    assert "S7_WRITES_ENABLED" not in os.environ and "S7_SYSTEM_CMDS_ENABLED" not in os.environ
+    assert "Ignoring S7_WRITES_ENABLED=true" in caplog.text
+    assert "Ignoring S7_SYSTEM_CMDS_ENABLED=1" in caplog.text
+    tool_config = ToolConfig.from_env()
+    assert (tool_config.writes_enabled, tool_config.system_cmds_enabled) == (False, False)
+
+
+def test_false_gates_in_an_implicit_env_file_are_dropped_quietly(
+    tmp_path: Path, clean_env: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("S7_WRITES_ENABLED=false\n")
+    with caplog.at_level("WARNING", logger="s7comm_mcp"):
+        load_env_file(env_file, explicit=False)
+    assert "S7_WRITES_ENABLED" not in os.environ and "Ignoring" not in caplog.text
+
+
+def test_explicit_env_file_may_enable_writes(tmp_path: Path, clean_env: pytest.MonkeyPatch) -> None:
+    env_file = tmp_path / "plant.env"
+    env_file.write_text("S7_WRITES_ENABLED=true\nS7_SYSTEM_CMDS_ENABLED=true\n")
+    load_env_file(env_file, explicit=True)
+    assert ToolConfig.from_env().writes_enabled is True
+    assert ToolConfig.from_env().system_cmds_enabled is True
+
+
+def test_process_environment_wins_over_env_files(tmp_path: Path, clean_env: pytest.MonkeyPatch) -> None:
+    clean_env.setenv("S7_HOST", "from-client-config")
+    clean_env.setenv("S7_WRITES_ENABLED", "true")
+    env_file = tmp_path / ".env"
+    env_file.write_text("S7_HOST=from-file\nS7_WRITES_ENABLED=false\n")
+    load_env_file(env_file, explicit=True)
+    assert os.environ["S7_HOST"] == "from-client-config"
+    assert ToolConfig.from_env().writes_enabled is True
+
+
+def test_cli_end_to_end_gate_handling(tmp_path: Path, clean_env: pytest.MonkeyPatch) -> None:
+    """The real entry point: an implicit .env cannot enable writes, --env-file can."""
+    script = (
+        "import sys, s7comm_mcp.cli as cli, s7comm_mcp.server as server\n"
+        "from pathlib import Path\n"
+        "cli.find_env_file = lambda start=None: Path(sys.argv[1]) if sys.argv[1] != '-' else None\n"
+        "class Probe:\n"
+        "    def __init__(self):\n"
+        "        from s7comm_mcp.tools import ToolConfig\n"
+        "        print('writes=%s' % ToolConfig.from_env().writes_enabled, file=sys.stderr)\n"
+        "    def run(self): pass\n"
+        "cli.S7CommMCPServer = Probe\n"
+        "cli.main(sys.argv[2:])\n"
+    )
+    env_file = tmp_path / ".env"
+    env_file.write_text("S7_WRITES_ENABLED=true\n")
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-c", script, *args], capture_output=True, text=True, timeout=30, input=""
+        )
+
+    implicit = run(str(env_file))
+    assert "writes=False" in implicit.stderr and "Ignoring S7_WRITES_ENABLED=true" in implicit.stderr
+    assert implicit.stdout == ""
+    explicit = run("-", "--env-file", str(env_file))
+    assert "writes=True" in explicit.stderr and explicit.stdout == ""
+    missing = run("-", "--env-file", str(tmp_path / "nope.env"))
+    assert missing.returncode == 2 and "does not exist" in missing.stderr
 
 
 def test_cli_reports_config_errors_on_stderr_only(clean_env: pytest.MonkeyPatch) -> None:

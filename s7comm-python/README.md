@@ -22,9 +22,12 @@ The server speaks MCP over stdio, so on its own it just waits for a client; the 
 
 ## Configuration
 
-Settings come from environment variables (for example the `env` block of an MCP client configuration) and from a `.env` file. Copy [`.env.example`](.env.example) to `s7comm-python/.env` and edit it.
+Settings come from the process environment (for example the `env` block of an MCP client configuration), from a `.env` file, or from a file passed with `--env-file`. Copy [`.env.example`](.env.example) to start one.
 
-Where `.env` is looked up: the server starts in the directory that holds the `s7comm_mcp` package and walks up through its parents, loading the first `.env` it finds. For a `uv sync` checkout that is `s7comm-python/src/s7comm_mcp`, `s7comm-python/src`, `s7comm-python`, then the repository root and the directories above it, so `s7comm-python/.env` is the place for it. Inside the IndustriConnect suite, a `.env` at the suite root is picked up when there is none closer. The lookup does not depend on the directory the client starts the server in. Variables already set in the environment win over the file, and the file that was loaded is logged on stderr.
+- **Implicit `.env`.** In a source checkout the server loads `s7comm-python/.env`: it walks up from the `s7comm_mcp` package to the nearest `pyproject.toml` and uses the `.env` beside it only if that is this project's own `pyproject.toml`. It never reads the working directory, the repository root or anything above, and an installed (non-checkout) server has no implicit `.env`.
+- **`--env-file PATH`.** Loads that file instead, e.g. `"args": [..., "run", "s7comm-mcp", "--env-file", "/abs/path/plant.env"]` in a client configuration.
+- **Precedence.** Variables already set in the environment win over either file. The file that was loaded is logged on stderr.
+- **Safety switches.** `S7_WRITES_ENABLED` and `S7_SYSTEM_CMDS_ENABLED` are honoured only from the process environment or an `--env-file`. An implicit `.env` may set connection settings, but a value in it that would enable a switch is ignored with a warning on stderr naming the variable. A server started from an untrusted project directory therefore cannot be talked into writing by a file it happens to find.
 
 ```
 S7_HOST=192.168.0.1
@@ -35,8 +38,6 @@ S7_CONNECTION_TYPE=PG
 S7_TIMEOUT=5
 S7_MAX_RETRIES=3
 S7_RETRY_BACKOFF_BASE=0.5
-S7_WRITES_ENABLED=false
-S7_SYSTEM_CMDS_ENABLED=false
 TAG_MAP_FILE=/absolute/path/to/tags.json
 ```
 
@@ -50,8 +51,8 @@ TAG_MAP_FILE=/absolute/path/to/tags.json
 | `S7_MAX_RETRIES` | `3` | Reconnect-and-retry attempts after a link error (TCP/ISO/timeout). Errors the CPU reports for a request, such as `CPU : Item not available`, are returned at once without retrying |
 | `S7_RETRY_BACKOFF_BASE` | `0.5` | Seconds; doubles on each retry |
 | `S7_DEBUG` | `false` | `true` logs Snap7 and server debug output to stderr |
-| `S7_WRITES_ENABLED` | `false` | `true` lets the write tools change PLC memory and outputs; otherwise they refuse |
-| `S7_SYSTEM_CMDS_ENABLED` | `false` | `true` allows `set_cpu_state` (RUN/STOP) |
+| `S7_WRITES_ENABLED` | `false` | `true` lets the write tools change PLC memory and outputs; otherwise they refuse. Not read from an implicit `.env` |
+| `S7_SYSTEM_CMDS_ENABLED` | `false` | `true` allows `set_cpu_state` (RUN/STOP), together with `S7_WRITES_ENABLED=true`. Not read from an implicit `.env` |
 | `TAG_MAP_FILE` | unset | Path to a JSON tag map (below) |
 
 Invalid values (a port that is not a number, `S7_WRITES_ENABLED=enable`, an unknown connection type) stop the server at startup with exit code 2 and a message on stderr. stdout carries only MCP JSON-RPC.

@@ -45,7 +45,10 @@ def mock_plc() -> Iterator[MockPLC]:
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     for name in SERVER_ENV_VARS:
-        monkeypatch.delenv(name, raising=False)
+        # setenv first so the original state (usually "unset") is restored at
+        # teardown even if code under test writes os.environ directly.
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
     return monkeypatch
 
 

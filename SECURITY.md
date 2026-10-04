@@ -36,9 +36,14 @@ the office network.
   exercised end to end without touching real plant. Do that first, every time.
 - **Keep it read-only until you mean otherwise.** Write tools move physical
   equipment. There is no undo, and a language model will call a tool it has
-  been given. Check which `.env` the server loaded (it logs the path on stderr):
-  the file is looked up from the package directory upwards, so a `.env` in a
-  parent directory can enable writes.
+  been given.
+- **Safety switches come only from you.** `S7_WRITES_ENABLED` and
+  `S7_SYSTEM_CMDS_ENABLED` are honoured only from the process environment
+  (e.g. the MCP client's `env` block) or a file passed with `--env-file`. The
+  implicit `s7comm-python/.env` may set connection settings, but a value in it
+  that would enable a switch is ignored with a warning on stderr. The server
+  never reads a `.env` from its working directory, which for a directly
+  launched server is the MCP client's project and may not be trusted.
 - **Do not expose the server beyond the host running the client.** It is a
   stdio process meant to run beside the MCP client, not a network service. The
   mock PLC, on the other hand, listens on all interfaces by default; start it
