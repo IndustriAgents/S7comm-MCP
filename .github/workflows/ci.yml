@@ -65,6 +65,36 @@ jobs:
       - name: Tests (unit, mock PLC, MCP over stdio)
         run: uv run --no-sync pytest -v
 
+  # The floors in pyproject.toml must be versions the suite passes on. This
+  # installs the lowest version of every direct dependency that the floors
+  # allow (instead of uv.lock) and runs the tests and ruff with them.
+  server-lowest:
+    name: MCP server, lowest direct dependencies
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: s7comm-python
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install the lowest direct dependency versions
+        run: |
+          uv venv --python 3.11 .venv-lowest
+          VIRTUAL_ENV=.venv-lowest uv pip install --resolution lowest-direct -e ".[dev]"
+          VIRTUAL_ENV=.venv-lowest uv pip list
+
+      - name: Tests (lowest direct dependencies)
+        run: .venv-lowest/bin/python -m pytest -q
+
+      - name: Lint and format check (lowest ruff)
+        run: |
+          .venv-lowest/bin/ruff check . ../s7comm-mock-server
+          .venv-lowest/bin/ruff format --check . ../s7comm-mock-server
+
   mock:
     name: Mock PLC (s7comm-mock-server)
     runs-on: ubuntu-latest
