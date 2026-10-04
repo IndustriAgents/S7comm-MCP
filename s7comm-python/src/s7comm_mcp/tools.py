@@ -576,6 +576,19 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
             return None
         return fail(WRITES_DISABLED, {"tool": tool})
 
+    def _system_cmds_refused() -> Envelope | None:
+        # A CPU command changes the plant at least as much as a write, so it
+        # needs the write switch as well as its own.
+        cfg = resources.config
+        if cfg.writes_enabled and cfg.system_cmds_enabled:
+            return None
+        return fail(
+            "set_cpu_state is disabled: it needs both S7_WRITES_ENABLED=true and S7_SYSTEM_CMDS_ENABLED=true "
+            f"(currently S7_WRITES_ENABLED={str(cfg.writes_enabled).lower()}, "
+            f"S7_SYSTEM_CMDS_ENABLED={str(cfg.system_cmds_enabled).lower()})",
+            {"tool": "set_cpu_state"},
+        )
+
     async def _read(addr_args: dict[str, Any], **kwargs: Any) -> Envelope:
         meta = {k: v for k, v in addr_args.items() if v is not None}
         try:
@@ -812,19 +825,19 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
 
     @tool
     async def set_cpu_state(state: str) -> Envelope:
-        """Switch the CPU to RUN (hot start) or STOP. Disabled unless S7_SYSTEM_CMDS_ENABLED=true.
+        """Switch the CPU to RUN (hot start) or STOP.
 
+        Disabled unless both S7_WRITES_ENABLED=true and S7_SYSTEM_CMDS_ENABLED=true.
         Succeeds only when the PLC accepted the command and then reports the
-        requested mode (polled for up to S7_TIMEOUT seconds).
+        requested mode (polled for up to S7_TIMEOUT seconds). The command is sent
+        at most once.
 
         Args:
             state: "RUN" or "STOP".
         """
-        if not resources.config.system_cmds_enabled:
-            return fail(
-                "System commands are disabled (set S7_SYSTEM_CMDS_ENABLED=true to allow)",
-                {"tool": "set_cpu_state"},
-            )
+        refused = _system_cmds_refused()
+        if refused:
+            return refused
         try:
             observed, meta = await client.set_cpu_state(state)
         except Exception as exc:
@@ -1029,6 +1042,8 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         settings = {
             "writes_enabled": resources.config.writes_enabled,
             "system_cmds_enabled": resources.config.system_cmds_enabled,
+            # set_cpu_state needs both switches.
+            "cpu_control_enabled": resources.config.writes_enabled and resources.config.system_cmds_enabled,
             "tag_map": resources.tag_map.status(),
         }
         try:

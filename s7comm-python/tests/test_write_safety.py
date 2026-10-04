@@ -139,3 +139,36 @@ async def test_string_length_without_string_is_refused(make_server: ServerFactor
 async def test_bit_index_on_typed_read_is_refused(make_server: ServerFactory) -> None:
     result = await call(make_server(), "read_db_typed", db_number=1, start_offset=4, data_type="REAL", bit_index=0)
     assert result["success"] is False and "bit_index only applies" in result["error"]
+
+
+# ----------------------------------------------- finding 3: RUN/STOP needs both switches
+
+
+@pytest.mark.parametrize(("writes", "system"), [(False, True), (True, False), (False, False)])
+async def test_set_cpu_state_needs_writes_and_system_commands(
+    make_server: ServerFactory, writes: bool, system: bool
+) -> None:
+    server = make_server(writes=writes, system=system)
+    result = await call(server, "set_cpu_state", state="STOP")
+    assert result["success"] is False
+    assert "S7_WRITES_ENABLED=true and S7_SYSTEM_CMDS_ENABLED=true" in result["error"]
+    assert (await call(server, "read_cpu_state"))["data"]["mode"] == "RUN"
+    assert (await call(server, "ping"))["data"]["cpu_control_enabled"] is False
+
+
+async def test_set_cpu_state_works_with_both_switches(make_server: ServerFactory) -> None:
+    server = make_server(writes=True, system=True)
+    try:
+        stop = await call(server, "set_cpu_state", state="STOP")
+        assert stop["success"] is True and stop["data"]["mode"] == "STOP"
+    finally:
+        assert (await call(server, "set_cpu_state", state="RUN"))["success"]
+
+
+def test_startup_warns_when_system_commands_lack_writes(
+    clean_env: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    clean_env.setenv("S7_SYSTEM_CMDS_ENABLED", "true")
+    with caplog.at_level("WARNING", logger="s7comm_mcp"):
+        S7CommMCPServer()
+    assert "S7_SYSTEM_CMDS_ENABLED=true has no effect while S7_WRITES_ENABLED is false" in caplog.text

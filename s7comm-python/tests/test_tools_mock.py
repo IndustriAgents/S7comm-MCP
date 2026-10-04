@@ -177,6 +177,7 @@ async def test_writes_are_refused_by_default(make_server: ServerFactory) -> None
     assert await raw(server, "db", 40, db_number=1) == before
     stop = await call(server, "set_cpu_state", state="STOP")
     assert stop["success"] is False and "S7_SYSTEM_CMDS_ENABLED" in stop["error"]
+    assert "S7_WRITES_ENABLED" in stop["error"]
 
 
 # ------------------------------------------------------------- BOOL writes touch one bit only
@@ -337,12 +338,12 @@ async def test_bad_arguments_return_envelopes(
 
 
 async def test_invalid_cpu_state_with_system_commands_enabled(make_server: ServerFactory) -> None:
-    result = await call(make_server(system=True), "set_cpu_state", state="PAUSE")
+    result = await call(make_server(writes=True, system=True), "set_cpu_state", state="PAUSE")
     assert result["success"] is False and "RUN or STOP" in result["error"]
 
 
 async def test_set_cpu_state_reports_the_observed_mode(make_server: ServerFactory) -> None:
-    server = make_server(system=True)
+    server = make_server(writes=True, system=True)
     try:
         stop = await call(server, "set_cpu_state", state="stop")
         assert stop["success"] is True, stop

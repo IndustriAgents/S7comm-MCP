@@ -75,6 +75,11 @@ class S7CommMCPServer:
         if self.client.config.debug:
             for name in ("s7comm_mcp", "snap7"):
                 logging.getLogger(name).setLevel(logging.DEBUG)
+        if self.tool_config.system_cmds_enabled and not self.tool_config.writes_enabled:
+            logger.warning(
+                "S7_SYSTEM_CMDS_ENABLED=true has no effect while S7_WRITES_ENABLED is false: "
+                "set_cpu_state needs both and stays disabled"
+            )
         tag_map = TagMap(self.tool_config.tag_map_path)
         if tag_map.error:
             logger.warning("%s", tag_map.error)
@@ -100,7 +105,7 @@ class S7CommMCPServer:
             cfg.rack,
             cfg.slot,
             "ENABLED" if self.tool_config.writes_enabled else "disabled",
-            "ENABLED" if self.tool_config.system_cmds_enabled else "disabled",
+            "ENABLED" if self.tool_config.writes_enabled and self.tool_config.system_cmds_enabled else "disabled",
         )
         self._mcp.run()
 
