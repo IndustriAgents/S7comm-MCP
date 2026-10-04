@@ -517,8 +517,10 @@ async def test_ping_fails_honestly_without_a_plc(clean_env: pytest.MonkeyPatch) 
 
 
 async def test_s7_timeout_bounds_a_hung_plc(silent_tcp_server: int) -> None:
+    # The PLC accepts TCP but never answers the ISO handshake. With S7_TIMEOUT
+    # applied this fails after ~0.5 s; Snap7's own default would take 3 s.
     client = S7Client(S7ClientConfig(port=silent_tcp_server, timeout=0.5, max_retries=0))
     started = time.monotonic()
     with pytest.raises(S7ConnectionError, match="timed out"):
         await client.ensure_connection()
-    assert time.monotonic() - started < 5
+    assert time.monotonic() - started < 1.5
