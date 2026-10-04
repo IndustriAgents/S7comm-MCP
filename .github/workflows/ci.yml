@@ -13,11 +13,11 @@ concurrency:
 permissions:
   contents: read
 
-# Cheap, deterministic checks only. Nothing here needs a PLC or the mock to be
-# running: the MCP server connects to the PLC at startup, so starting it is a
-# smoke test for a workstation, not for CI. Both projects install from their
-# committed uv.lock with --locked, so a dependency change that forgot to update
-# the lockfile fails here.
+# Both projects install from their committed uv.lock with --locked, so a
+# dependency change that forgot to update the lockfile fails here. The server
+# job lints both projects and runs the pytest suite, whose integration tests
+# start the mock PLC from this checkout and drive the real MCP server over
+# stdio. No real PLC is involved anywhere.
 jobs:
   server:
     name: MCP server (s7comm-python)
@@ -32,30 +32,38 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Install dependencies from uv.lock
-        run: uv sync --locked
+      - name: Install dependencies from uv.lock (with the dev extra)
+        run: uv sync --locked --extra dev
 
       - name: Byte-compile sources
         run: uv run --no-sync python -m compileall -q src
 
-      # Builds the FastMCP server and registers every tool. This loads the
-      # bundled Snap7 native library but opens no connection.
+      - name: Lint (ruff check, server and mock)
+        run: uv run --no-sync ruff check . ../s7comm-mock-server
+
+      - name: Format (ruff format --check, server and mock)
+        run: uv run --no-sync ruff format --check . ../s7comm-mock-server
+
+      # Builds the FastMCP server and registers every tool. The server opens
+      # no PLC connection until a tool needs one.
       - name: Import package and register tools
         run: |
           uv run --no-sync python - <<'EOF'
           import asyncio
 
-          import snap7
-
           from s7comm_mcp import S7CommMCPServer
           from s7comm_mcp.cli import main  # noqa: F401  (console entry point)
 
-          snap7.client.Client().destroy()
           server = S7CommMCPServer()
           tools = asyncio.run(server._mcp.list_tools())
           assert tools, "no MCP tools registered"
+          assert all(t.description for t in tools), "a tool has no description"
+          assert not server.tool_config.writes_enabled, "writes must be off by default"
           print(f"{len(tools)} tools registered: " + ", ".join(t.name for t in tools))
           EOF
+
+      - name: Tests (unit, mock PLC, MCP over stdio)
+        run: uv run --no-sync pytest -v
 
   mock:
     name: Mock PLC (s7comm-mock-server)
@@ -78,3 +86,19 @@ jobs:
 
       - name: Console entry point
         run: uv run --no-sync s7comm-mock-server --help
+
+      # Runs the mock from its own locked environment, then checks it binds
+      # the requested host and stops cleanly on SIGTERM.
+      - name: Start, probe and stop the mock
+        run: |
+          .venv/bin/s7comm-mock-server --host 127.0.0.1 --port 11102 > mock.log 2>&1 &
+          pid=$!
+          for _ in $(seq 1 50); do
+            (exec 3<>/dev/tcp/127.0.0.1/11102) 2>/dev/null && break
+            sleep 0.1
+          done
+          kill -TERM "$pid"
+          wait "$pid"
+          cat mock.log
+          grep -q "Listening on 127.0.0.1:11102" mock.log
+          grep -q "Shutting down" mock.log
