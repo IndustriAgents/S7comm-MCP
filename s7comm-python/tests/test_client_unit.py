@@ -15,6 +15,7 @@ from snap7.type import S7SZL, Area, Parameter, S7CpuInfo, WordLen
 from support import free_port
 
 from s7comm_mcp import s7_client
+from s7comm_mcp.config import ConfigError
 from s7comm_mcp.s7_client import (
     AREAS,
     OperationFailedError,
@@ -619,3 +620,11 @@ async def test_requests_in_one_tool_call_share_one_deadline(fake_snap7: type[Fak
     assert excinfo.value.outcome == "not_sent"
     time.sleep(1.2)  # let the abandoned worker finish its check
     assert all_calls(fake_snap7, "write_area") == 0
+
+
+def test_s7_timeout_must_be_below_the_request_deadline() -> None:
+    with pytest.raises(ConfigError, match="must be smaller than S7_REQUEST_DEADLINE"):
+        S7ClientConfig(timeout=10, request_deadline=10)
+    with pytest.raises(ConfigError, match="must be smaller than S7_REQUEST_DEADLINE"):
+        S7ClientConfig(timeout=60, request_deadline=45)
+    assert S7ClientConfig(timeout=5, request_deadline=6).timeout == 5

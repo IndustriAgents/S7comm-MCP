@@ -49,7 +49,7 @@ TAG_MAP_FILE=/absolute/path/to/tags.json
 | `S7_RACK` / `S7_SLOT` | `0` / `2` | CPU rack and slot (see [Connecting to a real PLC](#connecting-to-a-real-plc)) |
 | `S7_CONNECTION_TYPE` | `PG` | Snap7 connection resource: `PG`, `OP` or `S7BASIC` |
 | `S7_TIMEOUT` | `5` | Seconds. Bounds the TCP connect, and is Snap7's ping, send and receive timeout |
-| `S7_REQUEST_DEADLINE` | `45` | Seconds. Overall deadline for one PLC request, including reconnects and retries (shorter if `S7_TIMEOUT` x 6 x (`S7_MAX_RETRIES` + 1) is; longer by 2 x `S7_TIMEOUT` per extra PDU for large transfers). It stays below the 60 s at which MCP clients commonly give up, so the server decides the outcome. A Snap7 call still stuck at the deadline is interrupted |
+| `S7_REQUEST_DEADLINE` | `45` | Seconds. Overall deadline for one tool call, counted from its start and shared by every PLC request it makes (a STRING header read and the write, a batch's checks and writes, waiting for another call to finish, reconnects and retries). Shorter if `S7_TIMEOUT` x 6 x (`S7_MAX_RETRIES` + 1) is; longer by 2 x `S7_TIMEOUT` per extra PDU for large transfers. It stays below the 60 s at which MCP clients commonly give up, so the server decides the outcome. Must be larger than `S7_TIMEOUT` |
 | `S7_MAX_RETRIES` | `3` | Reconnect-and-retry attempts after a link error (TCP/ISO/timeout). Reads are retried. Writes and RUN/STOP are never resent: only connecting and a short read that checks the link before the request are retried. Errors the CPU reports, such as `CPU : Item not available`, are returned at once |
 | `S7_RETRY_BACKOFF_BASE` | `0.5` | Seconds; doubles on each retry |
 | `S7_DEBUG` | `false` | `true` logs Snap7 and server debug output to stderr |
@@ -80,7 +80,7 @@ Every write (`write_db`, `write_output`, `write_marker`, `write_tag`, each `writ
 | `unknown` | true | Anything else after the request went out: a lost or garbled reply, a longer write that failed part-way (it may be partly applied), or RUN/STOP accepted but its mode not confirmed (not reached in time, or the read-back failed). It may have been applied: check before retrying. It is never resent automatically |
 | `not_sent` | false | Stopped before the request went out: writes disabled, invalid arguments, a failed check, a failure while building the request, an unreachable PLC, or the deadline expiring before the request was sent (it is then never sent later) |
 
-A write whose overall deadline expires after it was sent is `unknown`; a read that hits its deadline fails with a clean error.
+When the deadline passes, the server stops waiting: a write already sent is `unknown`, one not sent yet is `not_sent` and is never sent afterwards (in a batch, so are all entries not yet sent), and a read fails with a clean error. A Snap7 call that is still busy at that point (for instance a reply trickling in) is interrupted by closing its connection; against a PLC that simply stays silent it ends at the latest after `S7_TIMEOUT`, which is why `S7_TIMEOUT` must be smaller than `S7_REQUEST_DEADLINE` (the server refuses to start otherwise).
 
 If the MCP client cancels a call (`notifications/cancelled`) or disconnects (stdin closes), every write or RUN/STOP that has not gone out yet (still queued, connecting, retrying or checking the target) is cancelled and is never sent afterwards (`not_sent`). One already sent is not resent.
 

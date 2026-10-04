@@ -101,6 +101,12 @@ class S7ClientConfig:
             raise ConfigError(f"S7_CONNECTION_TYPE={self.connection_type!r} is not supported (use PG, OP or S7BASIC)")
         if self.timeout <= 0:
             raise ConfigError("S7_TIMEOUT must be greater than 0")
+        if self.timeout >= self.request_deadline:
+            # A silent PLC holds a Snap7 call for up to S7_TIMEOUT; that must end
+            # well inside the overall deadline of the tool call.
+            raise ConfigError(
+                f"S7_TIMEOUT ({self.timeout:g}s) must be smaller than S7_REQUEST_DEADLINE ({self.request_deadline:g}s)"
+            )
 
     @property
     def connection_type_code(self) -> int:
