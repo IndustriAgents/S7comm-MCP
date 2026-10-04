@@ -40,6 +40,7 @@ CLI flags (or the matching environment variables) set the address, update interv
 | `--update-interval` | `MOCK_S7_UPDATE_INTERVAL` | `1.0` seconds |
 | `--motor-speed` | `MOCK_S7_MOTOR_SPEED` | `1450.0` |
 | `--temp-start` | `MOCK_S7_TEMP_START` | `68.0` |
+| `--exit-on-stdin-eof` | | off: when set, the mock exits once its stdin closes (the test suite uses this so a killed test run leaves no mock behind) |
 
 Run `uv run s7comm-mock-server --help` for the full list. The rack and slot are not configurable: the Snap7 server accepts any.
 

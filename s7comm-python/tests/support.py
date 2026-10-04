@@ -43,6 +43,8 @@ class MockPLC:
     def stop(self) -> tuple[int, str]:
         if self.process.poll() is None:
             self.process.send_signal(signal.SIGTERM)
+            if self.process.stdin:
+                self.process.stdin.close()
             try:
                 self.process.wait(timeout=10)
             except subprocess.TimeoutExpired:
@@ -55,8 +57,11 @@ class MockPLC:
 def start_mock(host: str = "127.0.0.1", port: int | None = None, *extra: str) -> MockPLC:
     port = port or free_port()
     env = {k: v for k, v in os.environ.items() if not k.startswith("MOCK_S7_")}
+    # --exit-on-stdin-eof: if this test process dies (even by SIGKILL), the
+    # pipe closes and the mock exits instead of being orphaned on its port.
     process = subprocess.Popen(
-        [sys.executable, str(MOCK_SCRIPT), "--host", host, "--port", str(port), *extra],
+        [sys.executable, str(MOCK_SCRIPT), "--host", host, "--port", str(port), "--exit-on-stdin-eof", *extra],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

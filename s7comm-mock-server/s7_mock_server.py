@@ -10,6 +10,7 @@ import os
 import random
 import signal
 import sys
+import threading
 from dataclasses import dataclass
 
 try:
@@ -35,6 +36,7 @@ class MockConfig:
     update_interval: float = 1.0
     motor_speed: float = 1450.0
     temp_start: float = 68.0
+    exit_on_stdin_eof: bool = False
 
 
 class MockS7Server:
@@ -137,6 +139,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--update-interval", type=float, default=float(os.getenv("MOCK_S7_UPDATE_INTERVAL", "1.0")))
     parser.add_argument("--motor-speed", type=float, default=float(os.getenv("MOCK_S7_MOTOR_SPEED", "1450.0")))
     parser.add_argument("--temp-start", type=float, default=float(os.getenv("MOCK_S7_TEMP_START", "68.0")))
+    parser.add_argument(
+        "--exit-on-stdin-eof",
+        action="store_true",
+        help="shut down when stdin closes, e.g. because the process that started the mock died",
+    )
     return parser.parse_args(argv)
 
 
@@ -149,6 +156,22 @@ async def run_server(config: MockConfig) -> None:
             loop.add_signal_handler(signum, stop.set)
         except (NotImplementedError, RuntimeError):  # pragma: no cover - e.g. Windows
             signal.signal(signum, lambda *_: loop.call_soon_threadsafe(stop.set))
+    if config.exit_on_stdin_eof:
+        # The parent keeps our stdin open; when it dies, even by SIGKILL, the
+        # pipe closes and the mock shuts down instead of lingering on its port.
+        # os.read on the raw descriptor, not sys.stdin: a daemon thread blocked
+        # in the buffered reader makes the interpreter abort at shutdown.
+        stdin_fd = sys.stdin.fileno()
+
+        def _watch_stdin() -> None:
+            try:
+                while os.read(stdin_fd, 4096):
+                    pass
+            except OSError:
+                pass
+            loop.call_soon_threadsafe(stop.set)
+
+        threading.Thread(target=_watch_stdin, name="stdin-eof-watch", daemon=True).start()
     await server.start()
     try:
         await stop.wait()
@@ -167,6 +190,7 @@ def main(argv: list[str] | None = None) -> None:
         update_interval=args.update_interval,
         motor_speed=args.motor_speed,
         temp_start=args.temp_start,
+        exit_on_stdin_eof=args.exit_on_stdin_eof,
     )
     try:
         asyncio.run(run_server(config))

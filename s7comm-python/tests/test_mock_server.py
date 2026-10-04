@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
+import signal
 import socket
 import subprocess
 import sys
+import time
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -35,7 +39,12 @@ def non_loopback_ipv4() -> str | None:
 
 def test_sigterm_stops_gracefully_and_output_is_flushed() -> None:
     plc = start_mock()
-    code, output = plc.stop()  # SIGTERM; stdout is a pipe, not a terminal
+    # SIGTERM only: stdin stays open, so the stdin-EOF watch cannot be what stops it.
+    plc.process.send_signal(signal.SIGTERM)
+    code = plc.process.wait(timeout=10)
+    output = plc.process.stdout.read() if plc.process.stdout else ""  # a pipe, not a terminal
+    if plc.process.stdin:
+        plc.process.stdin.close()
     assert code == 0
     assert f"[mock-s7] Listening on 127.0.0.1:{plc.port}" in output
     assert "[mock-s7] Shutting down..." in output
@@ -105,3 +114,49 @@ def test_environment_is_read_at_run_time(monkeypatch: pytest.MonkeyPatch) -> Non
     args = module.parse_args([])
     assert (args.host, args.port) == ("127.0.0.1", 1234)
     assert module.MockConfig().host == "0.0.0.0"
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_mock_exits_when_the_test_process_is_killed() -> None:
+    """Suite rule 11: a killed pytest must not leave a mock PLC behind."""
+    tests_dir = str(Path(__file__).resolve().parent)
+    parent = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import sys, time; sys.path.insert(0, sys.argv[1]); from support import start_mock; "
+            "plc = start_mock(); print(plc.process.pid, plc.port, flush=True); time.sleep(120)",
+            tests_dir,
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert parent.stdout
+    mock_pid, port = (int(x) for x in parent.stdout.readline().split())
+    try:
+        parent.kill()  # SIGKILL: no cleanup code in the parent runs
+        parent.wait(timeout=10)
+        deadline = time.monotonic() + 10
+        while _alive(mock_pid) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert not _alive(mock_pid), "mock PLC outlived the killed test process"
+        with pytest.raises(OSError):
+            socket.create_connection(("127.0.0.1", port), timeout=1).close()
+    finally:
+        if _alive(mock_pid):
+            os.kill(mock_pid, signal.SIGKILL)
+
+
+def test_exit_on_stdin_eof_stops_gracefully() -> None:
+    plc = start_mock()
+    assert plc.process.stdin
+    plc.process.stdin.close()
+    assert plc.process.wait(timeout=10) == 0
+    assert "Shutting down" in (plc.process.stdout.read() if plc.process.stdout else "")
