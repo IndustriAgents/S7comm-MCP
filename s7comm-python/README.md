@@ -48,7 +48,8 @@ TAG_MAP_FILE=/absolute/path/to/tags.json
 | `S7_PORT` | `102` | ISO-on-TCP port (the mock uses `1102`) |
 | `S7_RACK` / `S7_SLOT` | `0` / `2` | CPU rack and slot (see [Connecting to a real PLC](#connecting-to-a-real-plc)) |
 | `S7_CONNECTION_TYPE` | `PG` | Snap7 connection resource: `PG`, `OP` or `S7BASIC` |
-| `S7_TIMEOUT` | `5` | Seconds. Bounds the TCP connect, and is Snap7's ping, send and receive timeout. Every request also has an overall deadline derived from it (about `S7_TIMEOUT` x 6 x (`S7_MAX_RETRIES` + 1), more for large transfers), so no call can hang |
+| `S7_TIMEOUT` | `5` | Seconds. Bounds the TCP connect, and is Snap7's ping, send and receive timeout |
+| `S7_REQUEST_DEADLINE` | `45` | Seconds. Overall deadline for one PLC request, including reconnects and retries (shorter if `S7_TIMEOUT` x 6 x (`S7_MAX_RETRIES` + 1) is; longer by 2 x `S7_TIMEOUT` per extra PDU for large transfers). It stays below the 60 s at which MCP clients commonly give up, so the server decides the outcome. A Snap7 call still stuck at the deadline is interrupted |
 | `S7_MAX_RETRIES` | `3` | Reconnect-and-retry attempts after a link error (TCP/ISO/timeout). Reads are retried. Writes and RUN/STOP are never resent: only connecting and a short read that checks the link before the request are retried. Errors the CPU reports, such as `CPU : Item not available`, are returned at once |
 | `S7_RETRY_BACKOFF_BASE` | `0.5` | Seconds; doubles on each retry |
 | `S7_DEBUG` | `false` | `true` logs Snap7 and server debug output to stderr |
@@ -80,6 +81,8 @@ Every write (`write_db`, `write_output`, `write_marker`, `write_tag`, each `writ
 | `not_sent` | false | Stopped before the request went out: writes disabled, invalid arguments, a failed check, a failure while building the request, an unreachable PLC, or the deadline expiring before the request was sent (it is then never sent later) |
 
 A write whose overall deadline expires after it was sent is `unknown`; a read that hits its deadline fails with a clean error.
+
+If the MCP client cancels a call (`notifications/cancelled`) or disconnects (stdin closes), every write or RUN/STOP that has not gone out yet (still queued, connecting, retrying or checking the target) is cancelled and is never sent afterwards (`not_sent`). One already sent is not resent.
 
 Tool annotations follow the same line: the write tools and `set_cpu_state` are marked `destructiveHint: true`, `idempotentHint: false`, and the read tools `readOnlyHint: true`, so a client is never invited to retry a write on its own.
 

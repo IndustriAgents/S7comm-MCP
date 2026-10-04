@@ -29,6 +29,9 @@ the office network.
   `meta.outcome: "unknown"` and says the write may have been applied: check
   the value before retrying. The write tools are annotated
   `destructiveHint: true`, `idempotentHint: false`.
+- **Cancelled means not sent.** A write or RUN/STOP that the MCP client
+  cancels, or that is still pending when the client disconnects, is never
+  sent afterwards, even if it was waiting for the PLC or for another request.
 - **There is no per-address allowlist.** With writes enabled, any DB, output or
   marker the PLC lets the connection write is writable by the model. Values are
   not range-checked beyond their data type. A BOOL write changes only its own
