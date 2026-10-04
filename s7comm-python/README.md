@@ -48,7 +48,7 @@ TAG_MAP_FILE=/absolute/path/to/tags.json
 | `S7_PORT` | `102` | ISO-on-TCP port (the mock uses `1102`) |
 | `S7_RACK` / `S7_SLOT` | `0` / `2` | CPU rack and slot (see [Connecting to a real PLC](#connecting-to-a-real-plc)) |
 | `S7_CONNECTION_TYPE` | `PG` | Snap7 connection resource: `PG`, `OP` or `S7BASIC` |
-| `S7_TIMEOUT` | `5` | Seconds. Bounds the TCP connect, and is Snap7's ping, send and receive timeout |
+| `S7_TIMEOUT` | `5` | Seconds. Bounds the TCP connect, and is Snap7's ping, send and receive timeout. Every request also has an overall deadline derived from it (about `S7_TIMEOUT` x 6 x (`S7_MAX_RETRIES` + 1), more for large transfers), so no call can hang |
 | `S7_MAX_RETRIES` | `3` | Reconnect-and-retry attempts after a link error (TCP/ISO/timeout). Reads are retried. Writes and RUN/STOP are never resent: only connecting and a short read that checks the link before the request are retried. Errors the CPU reports, such as `CPU : Item not available`, are returned at once |
 | `S7_RETRY_BACKOFF_BASE` | `0.5` | Seconds; doubles on each retry |
 | `S7_DEBUG` | `false` | `true` logs Snap7 and server debug output to stderr |
@@ -77,7 +77,11 @@ Every write (`write_db`, `write_output`, `write_marker`, `write_tag`, each `writ
 | `written` | true | The PLC confirmed it |
 | `rejected` | true | The CPU explicitly refused a request that fits in one PDU (up to 205 bytes, or a bit, or RUN/STOP); nothing was applied |
 | `unknown` | true | Anything else after the request went out: a lost or garbled reply, a longer write that failed part-way (it may be partly applied), or RUN/STOP accepted but its mode not confirmed (not reached in time, or the read-back failed). It may have been applied: check before retrying. It is never resent automatically |
-| `not_sent` | false | Stopped before the request went out: writes disabled, invalid arguments, a failed check, or an unreachable PLC |
+| `not_sent` | false | Stopped before the request went out: writes disabled, invalid arguments, a failed check, a failure while building the request, an unreachable PLC, or the deadline expiring before the request was sent (it is then never sent later) |
+
+A write whose overall deadline expires after it was sent is `unknown`; a read that hits its deadline fails with a clean error.
+
+Tool annotations follow the same line: the write tools and `set_cpu_state` are marked `destructiveHint: true`, `idempotentHint: false`, and the read tools `readOnlyHint: true`, so a client is never invited to retry a write on its own.
 
 Before a write is sent, the server reads its whole target range from the PLC, so a range the PLC does not have is refused as `not_sent` instead of being partly written. `write_multiple_vars` first checks every entry locally and then reads every target from the PLC (including STRING headers); if any check fails, nothing is written. The entries are then written in order, and the batch stops at the first `rejected` or `unknown` entry. Its `meta.outcome` is that entry's outcome.
 

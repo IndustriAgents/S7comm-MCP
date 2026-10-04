@@ -23,9 +23,12 @@ the office network.
   `S7_WRITES_ENABLED=true` and `S7_SYSTEM_CMDS_ENABLED=true`.
 - **Inputs are read-only.** No tool writes the process-image inputs (I/PE).
 - **A write reaches the PLC at most once.** Writes and RUN/STOP are never
-  resent automatically. If the link fails after the request went out, the
-  tool returns `success: false` with `meta.outcome: "unknown"` and says the
-  write may have been applied: check the value before retrying.
+  resent automatically. If the link fails after the request went out (or
+  the answer is garbled, or a multi-PDU write fails part-way, or the overall
+  deadline expires), the tool returns `success: false` with
+  `meta.outcome: "unknown"` and says the write may have been applied: check
+  the value before retrying. The write tools are annotated
+  `destructiveHint: true`, `idempotentHint: false`.
 - **There is no per-address allowlist.** With writes enabled, any DB, output or
   marker the PLC lets the connection write is writable by the model. Values are
   not range-checked beyond their data type. A BOOL write changes only its own

@@ -82,7 +82,7 @@ npx @modelcontextprotocol/inspector -e S7_HOST=127.0.0.1 -e S7_PORT=1102 \
 - Tag map system with `list_tags`, `read_tag`, `write_tag`
 - Health tools: `ping` (round trip to the PLC), `get_connection_status`
 - Read-only by default: write tools refuse unless `S7_WRITES_ENABLED=true`; CPU RUN/STOP also needs `S7_SYSTEM_CMDS_ENABLED=true`; inputs are never written
-- Writes reach the PLC at most once: a lost reply is reported (`meta.outcome: "unknown"`, "may have been applied; check before retrying"), never resent
+- Writes reach the PLC at most once: a lost reply is reported (`meta.outcome: "unknown"`, "may have been applied; check before retrying"), never resent; every request has an overall deadline, so no call hangs
 - Bad arguments, PLC errors and connection problems come back as `success: false` envelopes; the server reconnects after a dropped link
 - Configuration via environment variables, `s7comm-python/.env` or `--env-file` (see [`s7comm-python/README.md`](s7comm-python/README.md#configuration)); the safety switches are never taken from an implicitly found `.env`
 - Mock PLC for confident local testing before touching a real device
