@@ -6,6 +6,7 @@ Every refused write must leave PLC memory exactly as it was.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
@@ -497,7 +498,9 @@ async def test_partial_multi_pdu_write_is_unknown(
         server.client,
         "_execute",
         # Keep send-once semantics, but make the pre-send probe check nothing.
-        lambda name, op, probe=None, single_pdu=True: real_execute(name, op, lambda client: None, single_pdu),
+        lambda name, op, probe=None, single_pdu=True, *rest: real_execute(
+            name, op, lambda client: None, single_pdu, *rest
+        ),
     )
     result = await call(server, "write_db", db_number=3, start_offset=500, value="ab" * 900)
     assert result["success"] is False and "Partial data written" in result["error"]
@@ -531,3 +534,46 @@ async def test_stop_accepted_then_link_lost_is_unknown(
         assert (await direct.read_cpu_state())[0]["mode"] == "STOP"
     finally:
         await direct.set_cpu_state("RUN")
+
+
+# ----------------------------------------------- rule 12: no call hangs, garbage answers
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("read_db", {"db_number": 1, "start_offset": 0, "size": 4}),
+        ("write_db", {"db_number": 1, "start_offset": 0, "value": "01"}),
+        ("set_cpu_state", {"state": "STOP"}),
+        ("ping", {}),
+    ],
+)
+@pytest.mark.parametrize("peer", ["garbage_tcp_server", "silent_tcp_server"])
+async def test_garbage_or_silent_peer_gives_a_prompt_clean_answer(
+    tool: str, args: dict[str, Any], peer: str, request: pytest.FixtureRequest
+) -> None:
+    port = request.getfixturevalue(peer)
+    client = S7Client(S7ClientConfig(port=port, timeout=0.5, max_retries=1, retry_backoff_base=0))
+    server = S7CommMCPServer(client=client, tool_config=ToolConfig(writes_enabled=True, system_cmds_enabled=True))
+    started = time.monotonic()
+    try:
+        result = await call(server, tool, **args)
+    finally:
+        await client.close()
+    assert time.monotonic() - started < client.request_deadline() + 1
+    assert result["success"] is False and result["error"]
+    if tool in ("write_db", "set_cpu_state"):
+        # The connection never came up, so nothing was sent.
+        assert outcome(result) == ("not_sent", False)
+
+
+async def test_garbled_answer_to_a_write_is_unknown_and_not_resent(
+    make_server: ServerFactory, proxy: S7Proxy, direct: S7Client
+) -> None:
+    await direct.write_db(3, 40, b"\x00\x00")
+    proxy.garble_reply_to = {S7_WRITE_VAR}
+    result = await call(make_server(port=proxy.port), "write_db", db_number=3, start_offset=40, value="7777")
+    assert result["success"] is False and outcome(result) == ("unknown", True)
+    assert "may have been applied" in result["error"]
+    assert proxy.count(S7_WRITE_VAR) == 1
+    assert (await direct.read_db(3, 40, 2))[0] == b"\x77\x77"

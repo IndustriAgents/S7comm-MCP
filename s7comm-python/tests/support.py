@@ -116,6 +116,7 @@ class S7Proxy:
         self.drop_reply_to: set[int] = set()
         self.drop_once = False
         self.go_down_after_reply_to: set[int] = set()
+        self.garble_reply_to: set[int] = set()
         self.refuse: tuple[int, int, int] | None = None
         self._sockets: list[socket.socket] = []
         self._lock = threading.Lock()
@@ -192,6 +193,8 @@ class S7Proxy:
                                 self.drop_reply_to.discard(code)
                         if code in self.go_down_after_reply_to:
                             state["go_down_after_reply"] = True
+                        if code in self.garble_reply_to:
+                            state["garble_next_reply"] = True
                         refuse = self.refuse is not None and self.refuse[0] == code
                         refuse = refuse and self.jobs.count(code) == self.refuse[1]
                     if refuse:
@@ -223,6 +226,11 @@ class S7Proxy:
     def _pump_replies(self, server: socket.socket, client: socket.socket, state: dict[str, bool]) -> None:
         try:
             while (frame := self._read_frame(server)) is not None:
+                if state.get("garble_next_reply") and len(frame) > 8 and frame[7] == 0x32 and frame[8] == 0x03:
+                    # The PLC applied the request; its answer arrives as garbage.
+                    state["garble_next_reply"] = False
+                    client.sendall(b"\xde\xad\xbe\xef" * 8)
+                    continue
                 if state["drop_next_reply"] and len(frame) > 8 and frame[7] == 0x32 and frame[8] == 0x03:
                     # The PLC applied the request; the reply is lost with the link.
                     client.shutdown(socket.SHUT_RDWR)

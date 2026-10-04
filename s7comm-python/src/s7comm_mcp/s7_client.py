@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import math
 import socket
 import threading
 import time
@@ -185,6 +186,15 @@ def describe_error(exc: BaseException) -> str:
     return str(exc).strip() or type(exc).__name__
 
 
+def is_snap7_error(exc: BaseException) -> bool:
+    """True for an error the Snap7 library reported (RuntimeError with a bytes message).
+
+    python-snap7 raises anything else (TypeError, ValueError, ...) from its own
+    Python code while preparing a call, i.e. before the library sent anything.
+    """
+    return isinstance(exc, RuntimeError) and bool(exc.args) and isinstance(exc.args[0], (bytes, bytearray))
+
+
 def is_link_error(exc: BaseException) -> bool:
     """True when an error means the TCP/ISO link is gone, so a reconnect may help.
 
@@ -275,6 +285,37 @@ def _identity_from_szl(records_hex: list[str]) -> tuple[str | None, str | None]:
     return order_code, version
 
 
+class _Call:
+    """Handshake between the async caller and the worker thread of one request.
+
+    The worker cannot be killed when the caller's deadline expires, so it must
+    not send the request afterwards: begin_send() and cancel() decide, under
+    one lock, whether the request went out before the caller gave up.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.cancelled = False
+        self.sent = False
+
+    def begin_send(self) -> bool:
+        with self._lock:
+            if self.cancelled:
+                return False
+            self.sent = True
+            return True
+
+    def cancel(self) -> bool:
+        """Give up on the request; returns whether it had already been sent."""
+        with self._lock:
+            self.cancelled = True
+            return self.sent
+
+
+class _Abandoned(Exception):
+    """The caller's deadline expired; the worker stops without sending."""
+
+
 def _safe(call: Callable[[], Any]) -> None:
     try:
         call()
@@ -295,6 +336,59 @@ class S7Client:
         self._lock = threading.RLock()
         self._connected = False
         self._last_error: str | None = None
+        self._reset_requested = False
+
+    # -----------------------------
+    # Overall deadline
+    # -----------------------------
+
+    def request_deadline(self, size: int = 0) -> float:
+        """Upper bound, in seconds, for one request including reconnects and retries.
+
+        Snap7's own timeouts normally end a request much earlier; this is the
+        guarantee that no call can hang, whatever the PLC (or Snap7) does.
+        """
+        chunks = max(1, math.ceil(size / SINGLE_PDU_WRITE_MAX))
+        per_attempt = self.config.timeout * (4 + 2 * chunks)  # TCP probe, connect, pre-check, request
+        backoff = sum(self.config.retry_backoff_base * 2**i for i in range(self.config.max_retries))
+        return per_attempt * (self.config.max_retries + 1) + backoff + 1.0
+
+    async def _run(
+        self,
+        op_name: str,
+        operation: OpCallable,
+        probe: OpCallable | None = None,
+        single_pdu: bool = True,
+        *,
+        size: int = 0,
+    ) -> OperationResult:
+        """Run ``_execute`` in a worker thread under :meth:`request_deadline`.
+
+        On expiry a write or command that was already sent is "unknown"; one
+        that was not is "not_sent" and is guaranteed never to be sent later. A
+        read fails with a clean error. The connection is reset before the next
+        request.
+        """
+        call = _Call()
+        deadline = self.request_deadline(size)
+        try:
+            with anyio.fail_after(deadline):
+                return await anyio.to_thread.run_sync(
+                    self._execute, op_name, operation, probe, single_pdu, call, abandon_on_cancel=True
+                )
+        except TimeoutError:
+            sent = call.cancel()
+            self._reset_requested = True
+            message = f"{op_name}: no answer within the {deadline:g}s deadline"
+            self._last_error = message
+            if probe is not None and sent:
+                raise WriteOutcomeUnknownError(
+                    f"{message}. The request was sent once and may have been applied; check before retrying. "
+                    "It was not resent."
+                ) from None
+            if probe is not None:
+                raise OperationFailedError(f"{message}; the request was not sent") from None
+            raise OperationFailedError(message) from None
 
     # -----------------------------
     # Async API used by the tools
@@ -302,19 +396,25 @@ class S7Client:
 
     async def ensure_connection(self) -> OperationMeta:
         """Connect if needed; raises :class:`S7ConnectionError` on failure."""
-        _, meta = await anyio.to_thread.run_sync(self._execute, "connect", lambda client: None)
+        _, meta = await self._run("connect", lambda client: None)
         return meta
 
     async def close(self) -> None:
-        await anyio.to_thread.run_sync(self._close_sync)
+        try:
+            with anyio.fail_after(self.config.timeout + 1.0):
+                await anyio.to_thread.run_sync(self._close_sync, abandon_on_cancel=True)
+        except TimeoutError:
+            # A request is still stuck in Snap7; it resets the link when it ends.
+            self._reset_requested = True
+            logger.warning("Closing the PLC connection timed out; a request is still pending")
 
     async def read_area(self, area: str, start: int, size: int, db_number: int = 0) -> OperationResult:
         area_enum = area_for(area)
         label = f"read_area(area={area},db={db_number},start={start},size={size})"
-        return await anyio.to_thread.run_sync(
-            self._execute,
+        return await self._run(
             label,
             lambda client: bytes(client.read_area(area_enum, db_number, start, size)),
+            size=size,
         )
 
     async def write_area(self, area: str, start: int, payload: bytes, db_number: int = 0) -> OperationMeta:
@@ -322,8 +422,7 @@ class S7Client:
             raise ValueError("payload must not be empty")
         area_enum = writable_area_for(area)
         label = f"write_area(area={area},db={db_number},start={start},size={len(payload)})"
-        _, meta = await anyio.to_thread.run_sync(
-            self._execute,
+        _, meta = await self._run(
             label,
             lambda client: client.write_area(area_enum, db_number, start, bytearray(payload)),
             # The probe reads the whole target range, so a range the PLC does
@@ -331,6 +430,7 @@ class S7Client:
             # would otherwise be applied up to the end of the area).
             lambda client: client.read_area(area_enum, db_number, start, len(payload)),
             len(payload) <= SINGLE_PDU_WRITE_MAX,
+            size=len(payload),
         )
         return meta
 
@@ -340,8 +440,7 @@ class S7Client:
             raise ValueError("bit index must be between 0 and 7")
         area_enum = writable_area_for(area)
         label = f"write_bit(area={area},db={db_number},byte={byte_offset},bit={bit})"
-        _, meta = await anyio.to_thread.run_sync(
-            self._execute,
+        _, meta = await self._run(
             label,
             lambda client: _write_bit(client, area_enum, db_number, byte_offset, bit, bool(value)),
             lambda client: client.read_area(area_enum, db_number, byte_offset, 1),
@@ -370,14 +469,14 @@ class S7Client:
                 "version": version,
             }
 
-        return await anyio.to_thread.run_sync(self._execute, "read_plc_info", _op)
+        return await self._run("read_plc_info", _op)
 
     async def read_cpu_state(self) -> OperationResult:
         def _op(client: Any) -> dict[str, str]:
             state = _cpu_status(client)
             return {"state": state, "mode": CPU_MODES[state]}
 
-        return await anyio.to_thread.run_sync(self._execute, "read_cpu_state", _op)
+        return await self._run("read_cpu_state", _op)
 
     async def set_cpu_state(self, state: str) -> OperationResult:
         """Send RUN (hot start) or STOP, then poll until the CPU reports that mode.
@@ -394,9 +493,7 @@ class S7Client:
             check_error(code, context="client")
 
         try:
-            _, meta = await anyio.to_thread.run_sync(
-                self._execute, f"set_cpu_state({normalized})", _command, _cpu_status
-            )
+            _, meta = await self._run(f"set_cpu_state({normalized})", _command, _cpu_status)
         except WriteOutcomeUnknownError:
             raise
         except OperationFailedError as exc:
@@ -429,16 +526,11 @@ class S7Client:
         return observed, meta
 
     async def read_system_time(self) -> OperationResult:
-        return await anyio.to_thread.run_sync(
-            self._execute,
-            "read_system_time",
-            lambda client: client.get_plc_datetime().isoformat(),
-        )
+        return await self._run("read_system_time", lambda client: client.get_plc_datetime().isoformat())
 
     async def read_szl(self, szl_id: int, szl_index: int) -> OperationResult:
         label = f"read_szl(id=0x{szl_id:04x},index=0x{szl_index:04x})"
-        return await anyio.to_thread.run_sync(
-            self._execute,
+        return await self._run(
             label,
             lambda client: _szl_to_dict(client.read_szl(szl_id, szl_index), szl_id, szl_index),
         )
@@ -514,6 +606,7 @@ class S7Client:
         operation: OpCallable,
         probe: OpCallable | None = None,
         single_pdu: bool = True,
+        call: _Call | None = None,
     ) -> OperationResult:
         """Run ``operation`` on a connected client, reconnecting after link errors.
 
@@ -533,22 +626,34 @@ class S7Client:
         attempt = 0
         send_once = probe is not None
         with self._lock:
+            if self._reset_requested:
+                # An earlier request was abandoned at its deadline: start clean.
+                self._reset_requested = False
+                self._reset_locked()
             while True:
                 attempt += 1
                 sent = False
                 try:
+                    if call is not None and call.cancelled:
+                        raise _Abandoned
                     if not self._connected:
                         self._connect_locked()
                     if probe is not None:
                         probe(self._client)
+                    # The last point at which the caller may still give up.
+                    if call is not None and not call.begin_send():
+                        raise _Abandoned
                     sent = send_once
                     result = operation(self._client)
+                except _Abandoned:
+                    raise
                 except Exception as exc:
                     message = describe_error(exc)
                     self._last_error = f"{op_name}: {message}"
                     if not is_link_error(exc):
                         # The connection is still fine; report the error unchanged.
-                        if not sent:
+                        if not sent or not is_snap7_error(exc):
+                            # Not sent, or failed while being built locally.
                             raise OperationFailedError(f"{op_name} failed: {message}") from exc
                         if single_pdu and is_refusal(message):
                             raise OperationFailedError(f"{op_name} failed: {message}", outcome="rejected") from exc

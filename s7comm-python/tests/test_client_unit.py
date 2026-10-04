@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import json
+import threading
+import time
 from typing import Any
 
 import pytest
@@ -77,9 +80,11 @@ class FakeClient:
 
     def _next(self) -> None:
         if FakeClient.script:
-            exc = FakeClient.script.pop(0)
-            if exc is not None:
-                raise exc
+            step = FakeClient.script.pop(0)
+            if callable(step) and not isinstance(step, BaseException):
+                step()  # e.g. a blocking hang
+            elif step is not None:
+                raise step
 
     def read_area(self, area: Any, db_number: int, start: int, size: int) -> bytearray:
         if not isinstance(area, Area):  # python-snap7 2.x on Python 3.11 raises TypeError
@@ -92,6 +97,10 @@ class FakeClient:
         assert isinstance(area, Area)
         self.calls.append(("write_area", area, db_number, start, bytes(data)))
         self._next()
+
+    @property
+    def writes(self) -> int:
+        return sum(1 for call in self.calls if call[0] == "write_area")
 
     def plc_stop(self) -> int:
         return FakeClient.command_rc
@@ -394,3 +403,94 @@ async def test_failed_mode_poll_after_an_accepted_command_is_unknown(
     with pytest.raises(OperationFailedError, match="accepted the STOP command") as excinfo:
         await client.set_cpu_state("STOP")
     assert (excinfo.value.outcome, excinfo.value.request_sent) == ("unknown", True)
+
+
+# ------------------------------------------------------------- rule 1a: local failures before the send
+
+
+async def test_failure_while_building_the_request_is_not_sent(fake_snap7: type[FakeClient]) -> None:
+    # python-snap7 raises a plain Python error while preparing the call, before Snap7 sends anything.
+    fake_snap7.script = [None, TypeError("unsupported operand type(s)")]
+    with pytest.raises(OperationFailedError) as excinfo:
+        await make_client().write_db(1, 0, b"\x01")
+    assert (excinfo.value.outcome, excinfo.value.request_sent) == ("not_sent", False)
+
+
+# ------------------------------------------------------------- rule 12: overall deadline
+
+
+def hang(seconds: float, done: threading.Event | None = None) -> Any:
+    def _block() -> None:
+        time.sleep(seconds)
+        if done is not None:
+            done.set()
+
+    return _block
+
+
+def fast_client() -> S7Client:
+    client = make_client(timeout=0.1, max_retries=0)  # deadline = 0.1 * 6 + 1 = 1.6 s
+    assert client.request_deadline() == pytest.approx(1.6)
+    return client
+
+
+async def test_a_hung_read_ends_with_a_clean_error_at_the_deadline(fake_snap7: type[FakeClient]) -> None:
+    client = fast_client()
+    done = threading.Event()
+    fake_snap7.script = [hang(3.0, done)]
+    started = time.monotonic()
+    with pytest.raises(OperationFailedError, match="no answer within the 1.6s deadline"):
+        await client.read_db(1, 0, 4)
+    assert time.monotonic() - started < 2.5
+    done.wait(5)
+
+
+async def test_a_hung_write_after_the_send_is_unknown(fake_snap7: type[FakeClient]) -> None:
+    client = fast_client()
+    done = threading.Event()
+    fake_snap7.script = [None, hang(3.0, done)]  # the probe answers, the write never does
+    with pytest.raises(OperationFailedError, match="may have been applied; check before retrying") as excinfo:
+        await client.write_db(1, 0, b"\x01")
+    assert (excinfo.value.outcome, excinfo.value.request_sent) == ("unknown", True)
+    done.wait(5)
+    assert fake_snap7.instances[0].writes == 1
+
+
+async def test_a_write_stuck_before_the_send_is_not_sent_and_never_sent_later(fake_snap7: type[FakeClient]) -> None:
+    client = fast_client()
+    done = threading.Event()
+    fake_snap7.script = [hang(2.5, done)]  # the pre-send probe hangs past the deadline
+    with pytest.raises(OperationFailedError, match="the request was not sent") as excinfo:
+        await client.write_db(1, 0, b"\x01")
+    assert (excinfo.value.outcome, excinfo.value.request_sent) == ("not_sent", False)
+    done.wait(5)
+    time.sleep(0.2)  # let the abandoned worker finish
+    assert sum(fake.writes for fake in fake_snap7.instances) == 0
+
+
+async def test_a_write_queued_behind_a_hung_call_is_never_sent(fake_snap7: type[FakeClient]) -> None:
+    client = fast_client()
+    done = threading.Event()
+    fake_snap7.script = [hang(3.5, done)]
+    stuck_read = asyncio.create_task(client.read_db(1, 0, 1))
+    await asyncio.sleep(0.2)
+    with pytest.raises(OperationFailedError) as excinfo:
+        await client.write_db(1, 0, b"\x01")  # waits for the lock until its deadline
+    assert excinfo.value.outcome == "not_sent"
+    with pytest.raises(OperationFailedError):
+        await stuck_read
+    done.wait(5)
+    time.sleep(0.3)
+    assert sum(fake.writes for fake in fake_snap7.instances) == 0
+
+
+async def test_the_next_request_after_a_deadline_starts_a_fresh_connection(fake_snap7: type[FakeClient]) -> None:
+    client = fast_client()
+    done = threading.Event()
+    fake_snap7.script = [hang(2.0, done)]
+    with pytest.raises(OperationFailedError):
+        await client.read_db(1, 0, 1)
+    done.wait(5)
+    payload, _ = await client.read_db(1, 0, 2)
+    assert payload == b"\x00\x01" and len(fake_snap7.instances) == 2
+    assert ("disconnect",) in fake_snap7.instances[0].calls

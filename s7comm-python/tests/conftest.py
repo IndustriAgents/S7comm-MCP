@@ -80,3 +80,46 @@ def silent_tcp_server() -> Iterator[int]:
         listener.close()
         for conn in accepted:
             conn.close()
+
+
+@pytest.fixture
+def garbage_tcp_server() -> Iterator[int]:
+    """A TCP peer that accepts connections and answers everything with garbage."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(8)
+    listener.settimeout(0.1)
+    stop = False
+    connections: list[socket.socket] = []
+
+    def _serve(conn: socket.socket) -> None:
+        conn.settimeout(0.2)
+        while not stop:
+            try:
+                if not conn.recv(4096):
+                    return
+                conn.sendall(b"\xde\xad\xbe\xef" * 8)
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+
+    def _accept() -> None:
+        while not stop:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                continue
+            connections.append(conn)
+            threading.Thread(target=_serve, args=(conn,), daemon=True).start()
+
+    thread = threading.Thread(target=_accept, daemon=True)
+    thread.start()
+    try:
+        yield listener.getsockname()[1]
+    finally:
+        stop = True
+        thread.join(timeout=2)
+        listener.close()
+        for conn in connections:
+            conn.close()
