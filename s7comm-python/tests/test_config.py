@@ -121,6 +121,11 @@ def test_no_implicit_env_file_inside_another_project(tmp_path: Path) -> None:
     site = tmp_path / ".venv" / "lib" / "python3.11" / "site-packages" / "s7comm_mcp"
     site.mkdir(parents=True)
     assert find_env_file(site / "cli.py") is None
+    # A copy vendored into someone else's source tree (not under site-packages):
+    # the nearest pyproject is not ours, so its .env is not read either.
+    vendored = tmp_path / "src" / "s7comm_mcp"
+    vendored.mkdir(parents=True)
+    assert find_env_file(vendored / "cli.py") is None
 
 
 def test_implicit_env_file_cannot_enable_writes(
