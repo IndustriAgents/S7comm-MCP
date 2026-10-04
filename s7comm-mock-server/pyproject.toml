@@ -9,10 +9,8 @@ authors = [
     { name = "IndustriAgents" }
 ]
 dependencies = [
-    "anyio>=4.0.0",
+    # 2.x: the 3.x server serves empty areas (see Dockerfile).
     "python-snap7>=2.0,<3",
-    "rich>=13.7.0",
-    "python-dotenv>=1.1.0",
 ]
 
 [project.scripts]
