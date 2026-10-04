@@ -257,8 +257,63 @@ async def test_server_starts_and_lists_tools_without_a_plc(tmp_path: Path) -> No
         errlog.close()
 
 
-def test_stdout_carries_only_json_rpc(mock_plc: MockPLC) -> None:
-    requests = [
+#: One call per tool (all 20), with arguments that succeed against the mock.
+EVERY_TOOL_CALL: dict[str, dict[str, Any]] = {
+    "read_db": {"db_number": 1, "start_offset": 0, "size": 4},
+    "read_db_typed": {"db_number": 1, "start_offset": 4, "data_type": "REAL"},
+    "write_db": {"db_number": 1, "start_offset": 220, "value": "00"},
+    "read_input": {"start_byte": 0, "size": 1},
+    "read_output": {"start_byte": 0, "size": 1},
+    "write_output": {"start_byte": 4, "value": True, "data_type": "BOOL", "bit_index": 3},
+    "read_marker": {"start_byte": 0, "size": 1},
+    "write_marker": {"start_byte": 4, "value": "00"},
+    "read_plc_info": {},
+    "read_cpu_state": {},
+    "set_cpu_state": {"state": "RUN"},
+    "read_system_time": {},
+    "read_szl": {"szl_id": 0x0011, "szl_index": 0},
+    "read_multiple_vars": {"variables": [{"db_number": 1, "offset": 4, "data_type": "REAL"}]},
+    "write_multiple_vars": {"variables": [{"db_number": 1, "offset": 221, "value": 1, "data_type": "BYTE"}]},
+    "list_tags": {},
+    "read_tag": {"name": "MotorSpeed"},
+    "write_tag": {"name": "Spare", "value": 2},
+    "ping": {},
+    "get_connection_status": {},
+}
+
+
+def test_stdout_carries_only_json_rpc(mock_plc: MockPLC, tmp_path: Path) -> None:
+    """Every stdout line is JSON-RPC, with every tool called and stdout unbuffered.
+
+    PYTHONUNBUFFERED=1 matters: with a block-buffered stdout a stray print()
+    would sit in the buffer and could be lost at exit instead of failing here.
+    """
+    tags = tmp_path / "tags.json"
+    tags.write_text(
+        json.dumps(
+            {
+                "MotorSpeed": {"area": "db", "db_number": 1, "offset": 0, "data_type": "REAL"},
+                "Spare": {"area": "db", "db_number": 1, "offset": 222, "data_type": "BYTE"},
+            }
+        )
+    )
+    env = {
+        **server_env(
+            mock_plc.port,
+            S7_DEBUG="true",
+            S7_WRITES_ENABLED="true",
+            S7_SYSTEM_CMDS_ENABLED="true",
+            TAG_MAP_FILE=str(tags),
+        ),
+        "PATH": "/usr/bin:/bin",
+        "PYTHONUNBUFFERED": "1",
+    }
+    calls = [
+        *EVERY_TOOL_CALL.items(),
+        ("read_db", {"db_number": 999, "start_offset": 0, "size": 1}),  # PLC error path
+        ("read_db", {"db_number": "x"}),  # argument-validation path
+    ]
+    requests: list[dict[str, Any]] = [
         {
             "jsonrpc": "2.0",
             "id": 1,
@@ -271,22 +326,16 @@ def test_stdout_carries_only_json_rpc(mock_plc: MockPLC) -> None:
         },
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "read_plc_info", "arguments": {}}},
-        {
-            "jsonrpc": "2.0",
-            "id": 4,
-            "method": "tools/call",
-            "params": {"name": "read_db", "arguments": {"db_number": 999, "start_offset": 0, "size": 1}},
-        },
-        {
-            "jsonrpc": "2.0",
-            "id": 5,
-            "method": "tools/call",
-            "params": {"name": "read_db", "arguments": {"db_number": "x"}},
-        },
-        {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "ping", "arguments": {}}},
     ]
-    env = {**server_env(mock_plc.port, S7_DEBUG="true"), "PATH": "/usr/bin:/bin"}
+    for offset, (name, arguments) in enumerate(calls):
+        requests.append(
+            {
+                "jsonrpc": "2.0",
+                "id": 10 + offset,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            }
+        )
     process = subprocess.Popen(
         SERVER_COMMAND,
         stdin=subprocess.PIPE,
@@ -296,9 +345,9 @@ def test_stdout_carries_only_json_rpc(mock_plc: MockPLC) -> None:
         cwd=SERVER_ROOT,
         env=env,
     )
+    responses: dict[int, dict[str, Any]] = {}
     try:
         assert process.stdin and process.stdout
-        responses: dict[int, dict[str, Any]] = {}
         for request in requests:
             process.stdin.write(json.dumps(request) + "\n")
             process.stdin.flush()
@@ -307,21 +356,28 @@ def test_stdout_carries_only_json_rpc(mock_plc: MockPLC) -> None:
             while request["id"] not in responses:
                 line = process.stdout.readline()
                 assert line, "server closed stdout early"
-                message = json.loads(line)  # every stdout line must be JSON-RPC
-                assert message.get("jsonrpc") == "2.0"
+                try:
+                    message = json.loads(line)
+                except json.JSONDecodeError:
+                    pytest.fail(f"non-JSON line on stdout: {line!r}")
+                assert message.get("jsonrpc") == "2.0", line
                 if "id" in message:
                     responses[message["id"]] = message
-        rest, stderr = process.communicate(timeout=20)  # closes stdin: the server exits on EOF
+        rest, stderr = process.communicate(timeout=30)  # closes stdin: the server exits on EOF
     finally:
         if process.poll() is None:
             process.kill()
             process.communicate()
     for line in rest.splitlines():
-        assert json.loads(line).get("jsonrpc") == "2.0"
-    assert responses[3]["result"]["structuredContent"]["success"] is True
-    assert responses[4]["result"]["structuredContent"]["success"] is False
-    assert responses[5]["result"]["structuredContent"]["error"].startswith("Invalid arguments")
-    assert responses[6]["result"]["structuredContent"]["success"] is True
+        assert json.loads(line).get("jsonrpc") == "2.0", line
+
+    listed = {tool["name"] for tool in responses[2]["result"]["tools"]}
+    assert listed == set(EVERY_TOOL_CALL), "every tool must be exercised here"
+    for offset, (name, _arguments) in enumerate(calls[: len(EVERY_TOOL_CALL)]):
+        envelope = responses[10 + offset]["result"]["structuredContent"]
+        assert envelope["success"] is True, (name, envelope)
+    assert responses[10 + len(EVERY_TOOL_CALL)]["result"]["structuredContent"]["success"] is False
+    assert responses[11 + len(EVERY_TOOL_CALL)]["result"]["structuredContent"]["error"].startswith("Invalid arguments")
     # The debug and error logs went somewhere, and it was stderr.
     assert "Item not available" in stderr
     assert "DEBUG" in stderr
