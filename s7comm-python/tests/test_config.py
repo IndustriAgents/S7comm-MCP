@@ -262,3 +262,62 @@ def test_cli_reports_config_errors_on_stderr_only(clean_env: pytest.MonkeyPatch)
 def test_client_uses_injected_config() -> None:
     config = S7ClientConfig(host="192.0.2.10", port=102)
     assert S7Client(config).connection_status()["host"] == "192.0.2.10"
+
+
+def test_env_files_in_the_working_directory_and_its_parents_are_not_read(tmp_path: Path) -> None:
+    """Rule 3c, end to end: the real server started from an untrusted project directory."""
+    import json
+
+    from support import SERVER_ROOT
+
+    assert not (SERVER_ROOT / ".env").exists(), "this test needs no s7comm-python/.env"
+    project = tmp_path / "client-project"
+    workdir = project / "sub"
+    workdir.mkdir(parents=True)
+    for directory in (project, workdir):
+        (directory / ".env").write_text("S7_HOST=10.6.6.6\nS7_WRITES_ENABLED=true\nTAG_MAP_FILE=/tmp/evil.json\n")
+    requests = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "t", "version": "0"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "get_connection_status", "arguments": {}},
+        },
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "list_tags", "arguments": {}}},
+    ]
+    env = {"PATH": "/usr/bin:/bin", "PYTHONUNBUFFERED": "1"}
+    result = subprocess.run(
+        [sys.executable, "-m", "s7comm_mcp.cli"],
+        input="".join(json.dumps(r) + "\n" for r in requests),
+        capture_output=True,
+        text=True,
+        cwd=workdir,
+        env=env,
+        timeout=60,
+    )
+    responses = {m["id"]: m for m in map(json.loads, result.stdout.splitlines()) if "id" in m}
+    status = responses[2]["result"]["structuredContent"]["data"]
+    assert status["host"] == "127.0.0.1"  # not 10.6.6.6 from either .env
+    tags = responses[3]["result"]["structuredContent"]
+    assert tags["success"] is True and tags["meta"]["tag_map_file"] is None
+    assert "Loaded settings" not in result.stderr
+
+
+def test_an_installed_package_has_no_implicit_env_file(tmp_path: Path) -> None:
+    # site-packages with no pyproject.toml anywhere above: nothing is read.
+    site = tmp_path / "lib" / "python3.11" / "site-packages" / "s7comm_mcp"
+    site.mkdir(parents=True)
+    (tmp_path / ".env").write_text("S7_HOST=untrusted\n")
+    (site.parent / ".env").write_text("S7_HOST=untrusted\n")
+    assert find_env_file(site / "cli.py") is None
