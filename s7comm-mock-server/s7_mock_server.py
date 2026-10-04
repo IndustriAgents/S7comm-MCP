@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ctypes
+import ipaddress
 import os
 import random
-import ctypes
+import signal
+import sys
 from dataclasses import dataclass
-from typing import Optional
 
 try:
     import snap7  # type: ignore
@@ -20,20 +22,19 @@ except ImportError:  # pragma: no cover - runtime guard
     SrvArea = None  # type: ignore[assignment]
 
 
-# Snap7 server area constants using official enum
-SRV_AREA_DB = SrvArea.DB if SrvArea is not None else None  # type: ignore[assignment]
-SRV_AREA_PE = SrvArea.PE if SrvArea is not None else None  # type: ignore[assignment]
-SRV_AREA_PA = SrvArea.PA if SrvArea is not None else None  # type: ignore[assignment]
-SRV_AREA_MK = SrvArea.MK if SrvArea is not None else None  # type: ignore[assignment]
+def log(message: str) -> None:
+    """Print a status line immediately, even when stdout is a pipe or a file."""
+    print(f"[mock-s7] {message}", flush=True)
 
 
 @dataclass
 class MockConfig:
-    host: str = os.getenv("MOCK_S7_HOST", "0.0.0.0")
-    port: int = int(os.getenv("MOCK_S7_PORT", "1102"))
-    update_interval: float = float(os.getenv("MOCK_S7_UPDATE_INTERVAL", "1.0"))
-    motor_speed: float = float(os.getenv("MOCK_S7_MOTOR_SPEED", "1450.0"))
-    temp_start: float = float(os.getenv("MOCK_S7_TEMP_START", "68.0"))
+    # Plain defaults: the environment is read in parse_args(), at run time.
+    host: str = "0.0.0.0"
+    port: int = 1102
+    update_interval: float = 1.0
+    motor_speed: float = 1450.0
+    temp_start: float = 68.0
 
 
 class MockS7Server:
@@ -57,13 +58,14 @@ class MockS7Server:
         self._outputs_buf = (ctypes.c_uint8 * len(self.outputs)).from_buffer(self.outputs)
         self._markers_buf = (ctypes.c_uint8 * len(self.markers)).from_buffer(self.markers)
         self._running = False
+        self._update_task: asyncio.Task[None] | None = None
 
     def _register_areas(self) -> None:
-        self.server.register_area(SRV_AREA_DB, 1, self._db1_buf)
-        self.server.register_area(SRV_AREA_DB, 2, self._db2_buf)
-        self.server.register_area(SRV_AREA_PE, 0, self._inputs_buf)
-        self.server.register_area(SRV_AREA_PA, 0, self._outputs_buf)
-        self.server.register_area(SRV_AREA_MK, 0, self._markers_buf)
+        self.server.register_area(SrvArea.DB, 1, self._db1_buf)
+        self.server.register_area(SrvArea.DB, 2, self._db2_buf)
+        self.server.register_area(SrvArea.PE, 0, self._inputs_buf)
+        self.server.register_area(SrvArea.PA, 0, self._outputs_buf)
+        self.server.register_area(SrvArea.MK, 0, self._markers_buf)
 
     def seed(self) -> None:
         snap7_util.set_real(self.db1, 0, self.config.motor_speed)  # MotorSpeed
@@ -71,7 +73,7 @@ class MockS7Server:
         snap7_util.set_real(self.db1, 8, 22.5)  # Flow
         snap7_util.set_dint(self.db1, 12, 12345678)  # Batch counter
         snap7_util.set_bool(self.db2, 0, 0, True)  # Alarm bit
-        snap7_util.set_string(self.db2, 2, "OK", 30)
+        snap7_util.set_string(self.db2, 2, "OK", 30)  # STRING[30]: max 30, length 2
         snap7_util.set_bool(self.outputs, 0, 0, False)  # Pump command
 
     async def start(self) -> None:
@@ -79,15 +81,22 @@ class MockS7Server:
             return
         self._register_areas()
         self.seed()
-        self.server.start(tcp_port=self.config.port)
+        # start_to binds the requested interface; start() would bind 0.0.0.0.
+        self.server.start_to(self.config.host, tcp_port=self.config.port)
         self._running = True
-        asyncio.create_task(self._update_loop())
-        print(f"[mock-s7] Listening on {self.config.host}:{self.config.port}")
+        self._update_task = asyncio.create_task(self._update_loop())
+        log(f"Listening on {self.config.host}:{self.config.port}")
 
     async def stop(self) -> None:
         if not self._running:
             return
         self._running = False
+        if self._update_task is not None:
+            self._update_task.cancel()
+            try:
+                await self._update_task
+            except asyncio.CancelledError:
+                pass
         self.server.stop()
         self.server.destroy()
 
@@ -106,31 +115,49 @@ class MockS7Server:
             await asyncio.sleep(self.config.update_interval)
 
 
-def parse_args() -> argparse.Namespace:
+def _ipv4(value: str) -> str:
+    try:
+        return str(ipaddress.IPv4Address(value))
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not an IPv4 address (Snap7 binds IPv4 only)") from None
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Mock Siemens S7 server using python-snap7.")
-    parser.add_argument("--host", default=os.getenv("MOCK_S7_HOST", "0.0.0.0"))
+    parser.add_argument(
+        "--host",
+        type=_ipv4,
+        default=os.getenv("MOCK_S7_HOST", "0.0.0.0"),
+        help="IPv4 address to bind (default 0.0.0.0, all interfaces; use 127.0.0.1 for local only)",
+    )
     parser.add_argument("--port", type=int, default=int(os.getenv("MOCK_S7_PORT", "1102")))
     parser.add_argument("--update-interval", type=float, default=float(os.getenv("MOCK_S7_UPDATE_INTERVAL", "1.0")))
     parser.add_argument("--motor-speed", type=float, default=float(os.getenv("MOCK_S7_MOTOR_SPEED", "1450.0")))
     parser.add_argument("--temp-start", type=float, default=float(os.getenv("MOCK_S7_TEMP_START", "68.0")))
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 async def run_server(config: MockConfig) -> None:
     server = MockS7Server(config)
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(signum, stop.set)
+        except (NotImplementedError, RuntimeError):  # pragma: no cover - e.g. Windows
+            signal.signal(signum, lambda *_: loop.call_soon_threadsafe(stop.set))
     await server.start()
     try:
-        while True:
-            await asyncio.sleep(1)
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        print("\n[mock-s7] Shutting down...")
+        await stop.wait()
+    finally:
+        log("Shutting down...")
         await server.stop()
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     if snap7 is None:
         raise SystemExit("python-snap7 is not installed. Install snap7 to run the mock PLC.")
-    args = parse_args()
+    args = parse_args(argv)
     config = MockConfig(
         host=args.host,
         port=args.port,
@@ -138,7 +165,11 @@ def main() -> None:
         motor_speed=args.motor_speed,
         temp_start=args.temp_start,
     )
-    asyncio.run(run_server(config))
+    try:
+        asyncio.run(run_server(config))
+    except KeyboardInterrupt:  # pragma: no cover - signal handler normally wins
+        pass
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":
