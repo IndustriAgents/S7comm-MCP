@@ -7,6 +7,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,14 +110,18 @@ class S7Proxy:
     """
 
     def __init__(self, target_port: int, target_host: str = "127.0.0.1") -> None:
-        import threading
-
         self.target = (target_host, target_port)
         self.jobs: list[int] = []
         self.drop_reply_to: set[int] = set()
         self.drop_once = False
         self.go_down_after_reply_to: set[int] = set()
         self.garble_reply_to: set[int] = set()
+        # hold_reply_to: the next reply to such a job waits until release is set (once).
+        self.hold_reply_to: set[int] = set()
+        self.release = threading.Event()
+        # trickle_reply_to: the reply is swallowed and replaced by COTP fragments
+        # that never complete, sent every 0.3 s (Snap7 then waits forever).
+        self.trickle_reply_to: set[int] = set()
         self.refuse: tuple[int, int, int] | None = None
         self._sockets: list[socket.socket] = []
         self._lock = threading.Lock()
@@ -166,8 +171,6 @@ class S7Proxy:
         return header + body
 
     def _accept_loop(self) -> None:
-        import threading
-
         while not self._closed:
             try:
                 client, _ = self._listener.accept()
@@ -195,6 +198,12 @@ class S7Proxy:
                             state["go_down_after_reply"] = True
                         if code in self.garble_reply_to:
                             state["garble_next_reply"] = True
+                        if code in self.hold_reply_to:
+                            self.hold_reply_to.discard(code)
+                            state["hold_next_reply"] = True
+                        if code in self.trickle_reply_to:
+                            state["trickle"] = True
+                            threading.Thread(target=self._trickle, args=(client,), daemon=True).start()
                         refuse = self.refuse is not None and self.refuse[0] == code
                         refuse = refuse and self.jobs.count(code) == self.refuse[1]
                     if refuse:
@@ -206,6 +215,14 @@ class S7Proxy:
         finally:
             server.close()
             client.close()
+
+    def _trickle(self, client: socket.socket) -> None:
+        while not self._closed:
+            try:
+                client.sendall(bytes([0x03, 0x00, 0x00, 0x08, 0x02, 0xF0, 0x00, 0x00]))  # DT without EOT
+            except OSError:
+                return
+            time.sleep(0.3)
 
     @staticmethod
     def _refusal(request: bytes, return_code: int) -> bytes:
@@ -226,6 +243,11 @@ class S7Proxy:
     def _pump_replies(self, server: socket.socket, client: socket.socket, state: dict[str, bool]) -> None:
         try:
             while (frame := self._read_frame(server)) is not None:
+                if state.get("trickle"):
+                    continue  # the real reply is swallowed; _trickle feeds the client
+                if state.get("hold_next_reply") and len(frame) > 8 and frame[7] == 0x32 and frame[8] == 0x03:
+                    state["hold_next_reply"] = False
+                    self.release.wait(30)
                 if state.get("garble_next_reply") and len(frame) > 8 and frame[7] == 0x32 and frame[8] == 0x03:
                     # The PLC applied the request; its answer arrives as garbage.
                     state["garble_next_reply"] = False

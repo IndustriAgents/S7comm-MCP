@@ -6,6 +6,7 @@ import asyncio
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -297,21 +298,35 @@ def test_env_files_in_the_working_directory_and_its_parents_are_not_read(tmp_pat
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "list_tags", "arguments": {}}},
     ]
     env = {"PATH": "/usr/bin:/bin", "PYTHONUNBUFFERED": "1"}
-    result = subprocess.run(
+    process = subprocess.Popen(
         [sys.executable, "-m", "s7comm_mcp.cli"],
-        input="".join(json.dumps(r) + "\n" for r in requests),
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         cwd=workdir,
         env=env,
-        timeout=60,
     )
-    responses = {m["id"]: m for m in map(json.loads, result.stdout.splitlines()) if "id" in m}
+    responses: dict[int, dict[str, object]] = {}
+    try:
+        assert process.stdin and process.stdout
+        for request in requests:
+            process.stdin.write(json.dumps(request) + "\n")
+            process.stdin.flush()
+            while "id" in request and request["id"] not in responses:
+                message = json.loads(process.stdout.readline())
+                if "id" in message:
+                    responses[message["id"]] = message
+        _, stderr = process.communicate(timeout=30)  # stdin closes only after every answer arrived
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate()
     status = responses[2]["result"]["structuredContent"]["data"]
     assert status["host"] == "127.0.0.1"  # not 10.6.6.6 from either .env
     tags = responses[3]["result"]["structuredContent"]
     assert tags["success"] is True and tags["meta"]["tag_map_file"] is None
-    assert "Loaded settings" not in result.stderr
+    assert "Loaded settings" not in stderr
 
 
 def test_an_installed_package_has_no_implicit_env_file(tmp_path: Path) -> None:
@@ -332,3 +347,25 @@ def test_an_installed_copy_inside_a_checkout_reads_no_env_file(tmp_path: Path) -
         installed = project / ".venv" / "lib" / "python3.11" / packages / "s7comm_mcp"
         installed.mkdir(parents=True)
         assert find_env_file(installed / "cli.py") is None
+
+
+def test_s7_request_deadline_is_configurable(clean_env: pytest.MonkeyPatch) -> None:
+    assert S7ClientConfig.from_env().request_deadline == 45.0
+    clean_env.setenv("S7_REQUEST_DEADLINE", "20")
+    assert S7ClientConfig.from_env().request_deadline == 20.0
+    clean_env.setenv("S7_REQUEST_DEADLINE", "0")
+    with pytest.raises(ConfigError, match="S7_REQUEST_DEADLINE"):
+        S7ClientConfig.from_env()
+
+
+def test_exit_guard_ends_a_process_with_a_stuck_worker() -> None:
+    script = (
+        "import threading, time\n"
+        "from s7comm_mcp.cli import _exit_even_if_a_worker_is_stuck\n"
+        "threading.Thread(target=time.sleep, args=(60,), name='stuck-snap7-call').start()\n"
+        "_exit_even_if_a_worker_is_stuck(0.5)\n"
+    )
+    started = time.monotonic()
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0 and time.monotonic() - started < 10
+    assert "stuck-snap7-call" in result.stderr

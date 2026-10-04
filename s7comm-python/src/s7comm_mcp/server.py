@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
+import anyio
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.stdio import stdio_server
 from mcp.types import ContentBlock
 from pydantic import ValidationError
 
@@ -18,6 +20,9 @@ from .s7_client import S7Client
 from .tools import TagMap, ToolConfig, ToolResources, fail, register_tools
 
 logger = logging.getLogger(__name__)
+
+#: Errors from writing an answer to a client that has disconnected.
+_UNDELIVERABLE = (anyio.ClosedResourceError, anyio.BrokenResourceError, BrokenPipeError, ConnectionResetError)
 
 
 @dataclass(slots=True)
@@ -41,6 +46,48 @@ class EnvelopeFastMCP(FastMCP):
     ``isError`` result. This keeps the ``{success, data, error, meta}`` contract
     for those calls too.
     """
+
+    #: Called when stdin reaches EOF (the MCP client is gone).
+    on_client_gone: Callable[[], None] | None = None
+    #: True once stdin has reached EOF.
+    client_gone: bool = False
+
+    async def run_stdio_async(self) -> None:
+        """Like FastMCP's, but notices the client disconnecting.
+
+        On stdin EOF the low-level server stops reading yet lets in-flight tool
+        calls finish. on_client_gone runs first, before the SDK even sees the
+        end of input, so a write still waiting to connect, retry or get the lock
+        is cancelled instead of being sent to a PLC nobody is watching.
+        """
+        self.client_gone = False
+        try:
+            async with stdio_server() as (read_stream, write_stream):
+                relay_send, relay_receive = anyio.create_memory_object_stream[Any](0)
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(self._relay_until_eof, read_stream, relay_send)
+                    await self._mcp_server.run(
+                        relay_receive, write_stream, self._mcp_server.create_initialization_options()
+                    )
+                    tg.cancel_scope.cancel()
+        except BaseExceptionGroup as group:
+            # Answers to calls that were still running cannot be delivered once
+            # the client is gone; that is a normal end, not a crash.
+            _, rest = group.split(_UNDELIVERABLE)
+            if not self.client_gone or rest is not None:
+                raise
+            logger.info("MCP client disconnected; dropped the answers of calls still in flight")
+
+    async def _relay_until_eof(self, source: Any, sink: Any) -> None:
+        try:
+            async with source:
+                async for message in source:
+                    await sink.send(message)
+        finally:
+            self.client_gone = True
+            if self.on_client_gone is not None:
+                self.on_client_gone()  # cancel pending PLC requests first ...
+            await sink.aclose()  # ... then let the SDK see the end of input
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Sequence[ContentBlock] | dict[str, Any]:
         try:
@@ -97,6 +144,7 @@ class S7CommMCPServer:
         # FastMCP has no version argument; without this, serverInfo.version
         # would be the mcp SDK's version instead of this server's.
         self._mcp._mcp_server.version = package_version()
+        self._mcp.on_client_gone = self.client.begin_shutdown
         register_tools(self._mcp, self.resources)
 
     def run(self) -> None:

@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from support import SERVER_ROOT, MockPLC, free_port
+from support import S7_PLC_STOP, S7_READ_VAR, S7_WRITE_VAR, SERVER_ROOT, MockPLC, S7Proxy, free_port
 
 SERVER_COMMAND = [sys.executable, "-m", "s7comm_mcp.cli"]
 
@@ -411,3 +411,169 @@ def test_bad_configuration_exits_before_serving(value: str) -> None:
     )
     assert result.returncode == 2 and result.stdout == ""
     assert "S7_WRITES_ENABLED" in result.stderr
+
+
+# ----------------------------------------------- client cancellation and disconnect (rules 1/12)
+
+
+class RawSession:
+    """The real server over stdio, driven with raw JSON-RPC lines."""
+
+    def __init__(self, env: dict[str, str]) -> None:
+        self.process = subprocess.Popen(
+            SERVER_COMMAND,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=SERVER_ROOT,
+            env={**env, "PATH": "/usr/bin:/bin", "PYTHONUNBUFFERED": "1"},
+        )
+        self.send(
+            {
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "t", "version": "0"},
+                },
+            }
+        )
+        self.wait_for(0)
+        self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def send(self, message: dict[str, Any]) -> None:
+        assert self.process.stdin
+        self.process.stdin.write(json.dumps(message) + "\n")
+        self.process.stdin.flush()
+
+    def call(self, request_id: int, tool: str, **arguments: Any) -> None:
+        self.send(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/call",
+                "params": {"name": tool, "arguments": arguments},
+            }
+        )
+
+    def cancel(self, request_id: int) -> None:
+        self.send({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": request_id}})
+
+    def wait_for(self, request_id: int) -> dict[str, Any]:
+        assert self.process.stdout
+        while True:
+            line = self.process.stdout.readline()
+            assert line, "server closed stdout"
+            message = json.loads(line)
+            if message.get("id") == request_id:
+                return message
+
+    def disconnect(self) -> None:
+        """The client goes away: close the server's stdin."""
+        assert self.process.stdin
+        self.process.stdin.close()
+
+    def close(self, timeout: float = 30) -> int:
+        """Disconnect (if not done yet) and wait for the server to exit."""
+        assert self.process.stdin and self.process.stdout and self.process.stderr
+        if not self.process.stdin.closed:
+            self.process.stdin.close()
+        try:
+            self.process.wait(timeout=timeout)
+            self.process.stdout.read()
+            self.stderr = self.process.stderr.read()
+        finally:
+            if self.process.poll() is None:
+                self.process.kill()
+                self.process.communicate()
+        return self.process.returncode
+
+
+def hung_plc_env(proxy: S7Proxy, **extra: str) -> dict[str, str]:
+    # S7_TIMEOUT=10: Snap7 waits that long for the held answer.
+    return {**server_env(proxy.port, S7_TIMEOUT="10", S7_MAX_RETRIES="0"), "S7_WRITES_ENABLED": "true", **extra}
+
+
+@pytest.fixture
+def proxy(mock_plc: MockPLC) -> Any:
+    plc_proxy = S7Proxy(mock_plc.port)
+    yield plc_proxy
+    plc_proxy.release.set()
+    plc_proxy.close()
+
+
+@pytest.fixture
+async def direct(mock_plc: MockPLC) -> Any:
+    from s7comm_mcp.s7_client import S7Client, S7ClientConfig
+
+    client = S7Client(S7ClientConfig(host=mock_plc.host, port=mock_plc.port, max_retries=0))
+    yield client
+    await client.close()
+
+
+async def test_write_pending_when_the_client_disconnects_is_never_sent(proxy: S7Proxy, direct: Any) -> None:
+    await direct.write_db(3, 300, b"\x00")
+    session = RawSession(hung_plc_env(proxy))
+    proxy.hold_reply_to = {S7_READ_VAR}  # the PLC hangs: the write's pre-send check gets no answer
+    session.call(1, "write_db", db_number=3, start_offset=300, value="5a")
+    time.sleep(0.5)
+    session.disconnect()  # the client goes away while the write waits
+    time.sleep(0.5)
+    proxy.release.set()  # the PLC comes back
+    assert session.close() == 0, session.stderr[-3000:]
+    assert "Traceback" not in session.stderr
+    time.sleep(0.3)
+    assert proxy.count(S7_WRITE_VAR) == 0
+    assert (await direct.read_db(3, 300, 1))[0] == b"\x00"
+
+
+async def test_write_cancelled_by_the_client_while_queued_is_never_sent(proxy: S7Proxy, direct: Any) -> None:
+    await direct.write_db(3, 301, b"\x00")
+    session = RawSession(hung_plc_env(proxy))
+    proxy.hold_reply_to = {S7_READ_VAR}
+    session.call(1, "read_db", db_number=1, start_offset=0, size=1)  # holds the client lock
+    time.sleep(0.3)
+    session.call(2, "write_db", db_number=3, start_offset=301, value="5a")  # queued behind it
+    time.sleep(0.3)
+    session.cancel(2)
+    time.sleep(0.3)
+    proxy.release.set()
+    assert session.wait_for(1)["result"]["structuredContent"]["success"] is True
+    session.call(3, "get_connection_status")
+    assert session.wait_for(3)["result"]["structuredContent"]["success"] is True  # session still fine
+    time.sleep(0.3)
+    assert session.close() == 0
+    assert proxy.count(S7_WRITE_VAR) == 0
+    assert (await direct.read_db(3, 301, 1))[0] == b"\x00"
+
+
+async def test_cpu_command_cancelled_by_the_client_is_never_sent(proxy: S7Proxy, direct: Any) -> None:
+    session = RawSession(hung_plc_env(proxy, S7_SYSTEM_CMDS_ENABLED="true"))
+    proxy.hold_reply_to = {S7_READ_VAR}
+    session.call(1, "read_db", db_number=1, start_offset=0, size=1)
+    time.sleep(0.3)
+    session.call(2, "set_cpu_state", state="STOP")
+    time.sleep(0.3)
+    session.cancel(2)
+    time.sleep(0.3)
+    proxy.release.set()
+    session.wait_for(1)
+    time.sleep(0.3)
+    assert session.close() == 0
+    assert proxy.count(S7_PLC_STOP) == 0
+    assert (await direct.read_cpu_state())[0]["mode"] == "RUN"
+
+
+def test_server_exits_promptly_with_a_request_stuck_in_snap7(proxy: S7Proxy) -> None:
+    session = RawSession({**server_env(proxy.port, S7_TIMEOUT="0.5", S7_MAX_RETRIES="0"), "S7_WRITES_ENABLED": "true"})
+    proxy.trickle_reply_to = {S7_WRITE_VAR}  # the answer never completes
+    session.call(1, "write_db", db_number=3, start_offset=302, value="01")
+    time.sleep(0.5)
+    started = time.monotonic()
+    assert session.close(timeout=20) == 0, session.stderr[-3000:]
+    assert time.monotonic() - started < 8
+    assert "Traceback" not in session.stderr
+    assert proxy.count(S7_WRITE_VAR) == 1

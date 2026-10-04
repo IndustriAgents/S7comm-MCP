@@ -15,6 +15,8 @@ import argparse
 import logging
 import os
 import sys
+import threading
+import time
 import tomllib
 from pathlib import Path
 
@@ -156,6 +158,29 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         # Allow graceful shutdown when the user presses Ctrl+C.
         pass
+    _exit_even_if_a_worker_is_stuck(server.client.config.timeout + 2.0)
+
+
+def _exit_even_if_a_worker_is_stuck(grace: float) -> None:
+    """After the MCP session ended, do not let a stuck Snap7 call keep the process alive.
+
+    The lifespan already interrupts a request that is still running. If a
+    worker thread is nevertheless still alive after ``grace`` seconds, flush
+    and exit hard rather than linger after the client has gone.
+    """
+    deadline = time.monotonic() + grace
+    for thread in threading.enumerate():
+        if thread is threading.main_thread() or thread.daemon:
+            continue
+        thread.join(max(0.0, deadline - time.monotonic()))
+    stuck = [
+        t.name for t in threading.enumerate() if t is not threading.main_thread() and not t.daemon and t.is_alive()
+    ]
+    if stuck:
+        logger.warning("Exiting with a PLC request still stuck in %s", ", ".join(stuck))
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
 
 
 if __name__ == "__main__":

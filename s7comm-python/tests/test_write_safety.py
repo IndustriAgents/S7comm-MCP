@@ -5,6 +5,7 @@ Every refused write must leave PLC memory exactly as it was.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator, Callable
@@ -577,3 +578,38 @@ async def test_garbled_answer_to_a_write_is_unknown_and_not_resent(
     assert "may have been applied" in result["error"]
     assert proxy.count(S7_WRITE_VAR) == 1
     assert (await direct.read_db(3, 40, 2))[0] == b"\x77\x77"
+
+
+# ----------------------------------------------- a stuck Snap7 call is interrupted
+
+
+async def test_a_stuck_write_is_interrupted_at_its_deadline(proxy: S7Proxy, direct: S7Client) -> None:
+    proxy.trickle_reply_to = {S7_WRITE_VAR}  # the reply trickles in forever
+    client = S7Client(S7ClientConfig(port=proxy.port, timeout=0.5, max_retries=0, request_deadline=2.0))
+    try:
+        with pytest.raises(WriteOutcomeUnknownError, match="deadline"):
+            await client.write_db(3, 310, b"\x01")
+        proxy.trickle_reply_to = set()
+        # Without the interrupt the stuck call would keep the lock and this read
+        # would wait for its own deadline instead of answering at once.
+        started = time.monotonic()
+        payload, _ = await client.read_db(1, 4, 4)
+        assert payload == bytes.fromhex("42280000") and time.monotonic() - started < 1.5
+    finally:
+        await client.close()
+    assert proxy.count(S7_WRITE_VAR) == 1
+
+
+async def test_close_interrupts_a_stuck_call(proxy: S7Proxy) -> None:
+    proxy.trickle_reply_to = {S7_WRITE_VAR}
+    client = S7Client(S7ClientConfig(port=proxy.port, timeout=0.5, max_retries=0, request_deadline=60))
+    task = asyncio.create_task(client.write_db(3, 311, b"\x01"))
+    await asyncio.sleep(0.5)
+    started = time.monotonic()
+    await client.close()  # waits S7_TIMEOUT + 1 s, then breaks the stuck connection
+    assert time.monotonic() - started < 3
+    assert client._lock.acquire(timeout=2), "the stuck worker still holds the client lock"
+    client._lock.release()
+    task.cancel()
+    with pytest.raises((asyncio.CancelledError, Exception)):
+        await task

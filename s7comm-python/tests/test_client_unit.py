@@ -9,6 +9,7 @@ import threading
 import time
 from typing import Any
 
+import anyio
 import pytest
 from snap7.type import S7SZL, Area, Parameter, S7CpuInfo, WordLen
 from support import free_port
@@ -103,6 +104,7 @@ class FakeClient:
         return sum(1 for call in self.calls if call[0] == "write_area")
 
     def plc_stop(self) -> int:
+        self.calls.append(("plc_stop",))
         return FakeClient.command_rc
 
     def plc_hot_start(self) -> int:
@@ -494,3 +496,102 @@ async def test_the_next_request_after_a_deadline_starts_a_fresh_connection(fake_
     payload, _ = await client.read_db(1, 0, 2)
     assert payload == b"\x00\x01" and len(fake_snap7.instances) == 2
     assert ("disconnect",) in fake_snap7.instances[0].calls
+
+
+# ------------------------------------------------------------- client cancellation (rules 1/12)
+
+
+def all_calls(fake_snap7: type[FakeClient], name: str) -> int:
+    return sum(1 for fake in fake_snap7.instances for call in fake.calls if call[0] == name)
+
+
+async def test_a_write_cancelled_while_queued_is_never_sent(fake_snap7: type[FakeClient]) -> None:
+    client = make_client(timeout=5.0)
+    done = threading.Event()
+    fake_snap7.script = [hang(1.5, done)]  # an earlier read holds the client lock
+    stuck_read = asyncio.create_task(client.read_db(1, 0, 1))
+    await asyncio.sleep(0.2)
+    with anyio.move_on_after(0.3) as scope:  # the MCP client cancels the queued write
+        await client.write_db(1, 0, b"\x5a")
+    assert scope.cancelled_caught
+    await stuck_read
+    done.wait(5)
+    time.sleep(0.3)  # the abandoned worker gets the lock now; it must not send
+    assert all_calls(fake_snap7, "write_area") == 0
+
+
+async def test_a_write_cancelled_while_connecting_is_never_sent(
+    fake_snap7: type[FakeClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    finished = threading.Event()
+
+    def slow_probe(self: S7Client) -> None:
+        time.sleep(1.0)  # a slow TCP connect
+        finished.set()
+
+    monkeypatch.setattr(S7Client, "_probe_tcp", slow_probe)
+    client = make_client(timeout=5.0)
+    with anyio.move_on_after(0.3):
+        await client.write_db(1, 0, b"\x5a")
+    finished.wait(5)
+    time.sleep(0.3)
+    assert all_calls(fake_snap7, "write_area") == 0
+
+
+async def test_a_cpu_command_cancelled_while_queued_is_never_sent(fake_snap7: type[FakeClient]) -> None:
+    client = make_client(timeout=5.0)
+    done = threading.Event()
+    fake_snap7.script = [hang(1.5, done)]
+    stuck_read = asyncio.create_task(client.read_db(1, 0, 1))
+    await asyncio.sleep(0.2)
+    with anyio.move_on_after(0.3):
+        await client.set_cpu_state("STOP")
+    await stuck_read
+    done.wait(5)
+    time.sleep(0.3)
+    assert all_calls(fake_snap7, "plc_stop") == 0
+
+
+async def test_a_write_cancelled_after_the_send_is_not_resent(fake_snap7: type[FakeClient]) -> None:
+    client = make_client(timeout=5.0)
+    done = threading.Event()
+    fake_snap7.script = [None, hang(1.0, done)]  # sent, then the reply is slow
+    with anyio.move_on_after(0.3):
+        await client.write_db(1, 0, b"\x5a")
+    done.wait(5)
+    time.sleep(0.3)
+    assert all_calls(fake_snap7, "write_area") == 1
+
+
+def test_default_deadline_stays_below_client_timeouts() -> None:
+    client = S7Client(S7ClientConfig())  # S7_TIMEOUT 5, S7_MAX_RETRIES 3
+    assert client.request_deadline() == 45.0  # not 124.5: decided before a 60 s client timeout
+    assert client.request_deadline(4096) > 45.0  # large transfers get time per extra PDU
+    assert S7Client(S7ClientConfig(request_deadline=20)).request_deadline() == 20.0
+
+
+async def test_no_request_starts_after_the_client_disconnected(fake_snap7: type[FakeClient]) -> None:
+    # E.g. the next entry of a batch, or a follow-up after the client went away.
+    client = make_client()
+    client.begin_shutdown()
+    with pytest.raises(OperationFailedError, match="disconnected") as excinfo:
+        await client.write_db(1, 0, b"\x01")
+    assert excinfo.value.outcome == "not_sent"
+    assert all_calls(fake_snap7, "write_area") == 0 and all_calls(fake_snap7, "connect") == 0
+
+
+async def test_disconnect_cancels_a_queued_write(fake_snap7: type[FakeClient]) -> None:
+    client = make_client(timeout=5.0)
+    done = threading.Event()
+    fake_snap7.script = [hang(1.0, done)]
+    stuck_read = asyncio.create_task(client.read_db(1, 0, 1))
+    await asyncio.sleep(0.2)
+    queued = asyncio.create_task(client.write_db(1, 0, b"\x5a"))
+    await asyncio.sleep(0.2)
+    client.begin_shutdown()  # stdin EOF
+    with pytest.raises(OperationFailedError) as excinfo:
+        await queued
+    assert excinfo.value.outcome == "not_sent"
+    await stuck_read  # it was already executing, so it simply completes
+    done.wait(5)
+    assert all_calls(fake_snap7, "write_area") == 0

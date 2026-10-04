@@ -87,6 +87,7 @@ class S7ClientConfig:
     connection_type: str = "PG"
     timeout: float = 5.0
     max_retries: int = 3
+    request_deadline: float = 45.0
     retry_backoff_base: float = 0.5
     debug: bool = False
 
@@ -119,6 +120,7 @@ class S7ClientConfig:
             timeout=env_float("S7_TIMEOUT", 5.0, minimum=0.1, maximum=600.0),
             max_retries=env_int("S7_MAX_RETRIES", 3, minimum=0, maximum=10),
             retry_backoff_base=env_float("S7_RETRY_BACKOFF_BASE", 0.5, minimum=0.0, maximum=60.0),
+            request_deadline=env_float("S7_REQUEST_DEADLINE", 45.0, minimum=1.0, maximum=3600.0),
             debug=env_bool("S7_DEBUG", False),
         )
 
@@ -337,6 +339,26 @@ class S7Client:
         self._connected = False
         self._last_error: str | None = None
         self._reset_requested = False
+        self._active_call: _Call | None = None
+        # Calls not yet finished, so a disconnecting client can cancel them all.
+        self._calls_lock = threading.Lock()
+        self._pending_calls: set[_Call] = set()
+        self._closing = False
+
+    def begin_shutdown(self) -> None:
+        """The MCP client is gone: nothing that has not been sent yet may be sent.
+
+        Cancels every pending call (queued on the lock, connecting, retrying,
+        probing); each one ends "not_sent" at its next check, at the latest
+        right before the send. New calls are refused.
+        """
+        with self._calls_lock:
+            self._closing = True
+            pending = list(self._pending_calls)
+        for call in pending:
+            call.cancel()
+        if pending:
+            logger.warning("MCP client disconnected: cancelled %d pending PLC request(s)", len(pending))
 
     # -----------------------------
     # Overall deadline
@@ -351,7 +373,12 @@ class S7Client:
         chunks = max(1, math.ceil(size / SINGLE_PDU_WRITE_MAX))
         per_attempt = self.config.timeout * (4 + 2 * chunks)  # TCP probe, connect, pre-check, request
         backoff = sum(self.config.retry_backoff_base * 2**i for i in range(self.config.max_retries))
-        return per_attempt * (self.config.max_retries + 1) + backoff + 1.0
+        worst_case = per_attempt * (self.config.max_retries + 1) + backoff + 1.0
+        # Capped by S7_REQUEST_DEADLINE (45 s by default, below the 60 s at which
+        # MCP clients commonly give up) plus time for each extra PDU, so the
+        # server, not the client's timeout, decides the outcome.
+        cap = self.config.request_deadline + 2 * self.config.timeout * (chunks - 1)
+        return min(worst_case, cap)
 
     async def _run(
         self,
@@ -370,15 +397,26 @@ class S7Client:
         request.
         """
         call = _Call()
+        with self._calls_lock:
+            if self._closing:
+                raise OperationFailedError(f"{op_name}: the MCP client disconnected; the request was not sent")
+            self._pending_calls.add(call)
         deadline = self.request_deadline(size)
         try:
             with anyio.fail_after(deadline):
                 return await anyio.to_thread.run_sync(
                     self._execute, op_name, operation, probe, single_pdu, call, abandon_on_cancel=True
                 )
+        except _Abandoned:
+            # Cancelled (client cancel or disconnect) before the request went out.
+            raise OperationFailedError(
+                f"{op_name}: cancelled before it was sent (the MCP client cancelled the call or "
+                "disconnected); the request was not sent"
+            ) from None
         except TimeoutError:
             sent = call.cancel()
             self._reset_requested = True
+            self._interrupt(call)
             message = f"{op_name}: no answer within the {deadline:g}s deadline"
             self._last_error = message
             if probe is not None and sent:
@@ -389,6 +427,29 @@ class S7Client:
             if probe is not None:
                 raise OperationFailedError(f"{message}; the request was not sent") from None
             raise OperationFailedError(message) from None
+        except BaseException:
+            # The MCP client cancelled the call (or the server is shutting down).
+            # A write that has not gone out yet must never go out afterwards; one
+            # already sent completes or fails on its own, nobody waits for it.
+            call.cancel()
+            raise
+        finally:
+            with self._calls_lock:
+                self._pending_calls.discard(call)
+
+    def _interrupt(self, call: _Call) -> None:
+        """Break the Snap7 connection under a request that overran its deadline.
+
+        Without this the worker thread could stay stuck in Snap7 (e.g. a reply
+        that trickles in forever), holding the client lock for every later
+        request and keeping the process alive at exit. Snap7's disconnect from
+        another thread makes the blocked call return within a fraction of a
+        second. Only the request that is actually executing is interrupted.
+        """
+        client = self._client
+        if self._active_call is call and client is not None:
+            logger.warning("Interrupting a PLC request that overran its deadline")
+            _safe(client.disconnect)
 
     # -----------------------------
     # Async API used by the tools
@@ -400,13 +461,19 @@ class S7Client:
         return meta
 
     async def close(self) -> None:
+        """Disconnect, waiting at most S7_TIMEOUT + 1 s for a request in progress."""
         try:
             with anyio.fail_after(self.config.timeout + 1.0):
                 await anyio.to_thread.run_sync(self._close_sync, abandon_on_cancel=True)
         except TimeoutError:
-            # A request is still stuck in Snap7; it resets the link when it ends.
+            # A request is still stuck in Snap7: break its connection so the
+            # worker thread ends and the process can exit.
             self._reset_requested = True
-            logger.warning("Closing the PLC connection timed out; a request is still pending")
+            active = self._active_call
+            if active is not None:
+                active.cancel()
+                self._interrupt(active)
+            logger.warning("Closing the PLC connection timed out; interrupted the pending request")
 
     async def read_area(self, area: str, start: int, size: int, db_number: int = 0) -> OperationResult:
         area_enum = area_for(area)
@@ -623,59 +690,75 @@ class S7Client:
         answer, an unexpected client error) is "unknown".
         """
         start = time.perf_counter()
-        attempt = 0
-        send_once = probe is not None
         with self._lock:
-            if self._reset_requested:
-                # An earlier request was abandoned at its deadline: start clean.
-                self._reset_requested = False
+            self._active_call = call
+            try:
+                return self._execute_locked(op_name, operation, probe, single_pdu, call, start)
+            finally:
+                self._active_call = None
+
+    def _execute_locked(
+        self,
+        op_name: str,
+        operation: OpCallable,
+        probe: OpCallable | None,
+        single_pdu: bool,
+        call: _Call | None,
+        start: float,
+    ) -> OperationResult:
+        """The retry loop of :meth:`_execute`; the caller holds ``self._lock``."""
+        send_once = probe is not None
+        attempt = 0
+        if self._reset_requested:
+            # An earlier request was abandoned at its deadline: start clean.
+            self._reset_requested = False
+            self._reset_locked()
+        while True:
+            attempt += 1
+            sent = False
+            try:
+                if call is not None and call.cancelled:
+                    raise _Abandoned
+                if not self._connected:
+                    self._connect_locked()
+                if probe is not None:
+                    probe(self._client)
+                # The last point at which the caller may still give up.
+                if call is not None and not call.begin_send():
+                    raise _Abandoned
+                sent = send_once
+                result = operation(self._client)
+            except _Abandoned:
+                raise
+            except Exception as exc:
+                message = describe_error(exc)
+                self._last_error = f"{op_name}: {message}"
+                if not is_link_error(exc):
+                    # The connection is still fine; report the error unchanged.
+                    if not sent or not is_snap7_error(exc):
+                        # Not sent, or failed while being built locally.
+                        raise OperationFailedError(f"{op_name} failed: {message}") from exc
+                    if single_pdu and is_refusal(message):
+                        raise OperationFailedError(f"{op_name} failed: {message}", outcome="rejected") from exc
+                    self._last_error = f"{op_name}: {message}; may have been applied"
+                    raise WriteOutcomeUnknownError(
+                        f"{op_name} failed after the request was sent ({message}). It may have been "
+                        "applied, possibly in part; check before retrying. It was not resent."
+                    ) from exc
                 self._reset_locked()
-            while True:
-                attempt += 1
-                sent = False
-                try:
-                    if call is not None and call.cancelled:
-                        raise _Abandoned
-                    if not self._connected:
-                        self._connect_locked()
-                    if probe is not None:
-                        probe(self._client)
-                    # The last point at which the caller may still give up.
-                    if call is not None and not call.begin_send():
-                        raise _Abandoned
-                    sent = send_once
-                    result = operation(self._client)
-                except _Abandoned:
-                    raise
-                except Exception as exc:
-                    message = describe_error(exc)
-                    self._last_error = f"{op_name}: {message}"
-                    if not is_link_error(exc):
-                        # The connection is still fine; report the error unchanged.
-                        if not sent or not is_snap7_error(exc):
-                            # Not sent, or failed while being built locally.
-                            raise OperationFailedError(f"{op_name} failed: {message}") from exc
-                        if single_pdu and is_refusal(message):
-                            raise OperationFailedError(f"{op_name} failed: {message}", outcome="rejected") from exc
-                        self._last_error = f"{op_name}: {message}; may have been applied"
-                        raise WriteOutcomeUnknownError(
-                            f"{op_name} failed after the request was sent ({message}). It may have been "
-                            "applied, possibly in part; check before retrying. It was not resent."
-                        ) from exc
-                    self._reset_locked()
-                    if sent:
-                        self._last_error = f"{op_name}: no reply ({message}); may have been applied"
-                        raise WriteOutcomeUnknownError(
-                            f"{op_name}: no reply from the PLC ({message}). The request was sent once and "
-                            "may have been applied; check before retrying. It was not resent."
-                        ) from exc
-                    if attempt > self.config.max_retries:
-                        error_cls = S7ConnectionError if isinstance(exc, S7ConnectionError) else OperationFailedError
-                        raise error_cls(f"{op_name} failed after {attempt} attempt(s): {message}") from exc
-                    delay = self.config.retry_backoff_base * (2 ** (attempt - 1))
-                    logger.warning("%s: %s; reconnecting in %.2fs", op_name, message, delay)
-                    time.sleep(delay)
-                    continue
-                self._last_error = None
-                duration = (time.perf_counter() - start) * 1000.0
-                return result, {"attempts": attempt, "duration_ms": round(duration, 3)}
+                if sent:
+                    self._last_error = f"{op_name}: no reply ({message}); may have been applied"
+                    raise WriteOutcomeUnknownError(
+                        f"{op_name}: no reply from the PLC ({message}). The request was sent once and "
+                        "may have been applied; check before retrying. It was not resent."
+                    ) from exc
+                if attempt > self.config.max_retries:
+                    error_cls = S7ConnectionError if isinstance(exc, S7ConnectionError) else OperationFailedError
+                    raise error_cls(f"{op_name} failed after {attempt} attempt(s): {message}") from exc
+                delay = self.config.retry_backoff_base * (2 ** (attempt - 1))
+                logger.warning("%s: %s; reconnecting in %.2fs", op_name, message, delay)
+                time.sleep(delay)
+                continue
+            self._last_error = None
+            duration = (time.perf_counter() - start) * 1000.0
+            return result, {"attempts": attempt, "duration_ms": round(duration, 3)}
