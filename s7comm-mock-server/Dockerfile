@@ -17,6 +17,10 @@ RUN pip install --no-cache-dir uv==0.7.7
 COPY pyproject.toml uv.lock README.md s7_mock_server.py ./
 RUN uv sync --locked --no-dev
 
+# Run unprivileged; port 1102 needs no root.
+RUN useradd --system --uid 10001 --no-create-home mock
+USER mock
+
 EXPOSE 1102
 
 # Run the console script directly (not via `uv run`) so the mock is PID 1 and

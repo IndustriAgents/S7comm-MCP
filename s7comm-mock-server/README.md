@@ -13,7 +13,7 @@ uv run s7comm-mock-server                     # all interfaces, port 1102
 uv run s7comm-mock-server --host 127.0.0.1    # this machine only
 ```
 
-Or with Docker (the image installs the versions pinned in `uv.lock`, with a pinned uv, and publishes port 1102):
+Or with Docker. The image installs the versions pinned in `uv.lock` with a pinned uv and runs as an unprivileged user. `run-docker.sh` publishes port 1102 on `127.0.0.1` only; edit its `-p` option to expose it to other hosts:
 
 ```bash
 cd s7comm-mock-server
