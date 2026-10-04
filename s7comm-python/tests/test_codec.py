@@ -8,6 +8,7 @@ import pytest
 
 from s7comm_mcp.tools import (
     address_from_spec,
+    check_string_header,
     decode_s7_string,
     decode_scalar,
     encode_scalar,
@@ -47,6 +48,25 @@ def test_string_encode_validates_length_and_charset() -> None:
         encode_string_text("日本", 30)
     with pytest.raises(ValueError, match="must be text"):
         encode_string_text(12, 30)
+
+
+@pytest.mark.parametrize(
+    ("header", "declared", "message"),
+    [
+        (b"\x00\x00", 20, "no S7 STRING header"),  # was accepted as "uninitialised"
+        (b"\x00\x00", 254, "no S7 STRING header"),
+        (b"\x1e\x02", 20, "max length of 30, not 20"),
+        (b"\x04\x09", 4, "current length exceeds max length"),
+    ],
+)
+def test_string_write_header_check_refuses(header: bytes, declared: int, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        check_string_header(header, declared)
+
+
+def test_string_write_header_check_accepts_a_matching_header() -> None:
+    check_string_header(b"\x1e\x02", 30)
+    check_string_header(b"\x1e\x00", 30)
 
 
 def test_string_write_requires_string_length() -> None:

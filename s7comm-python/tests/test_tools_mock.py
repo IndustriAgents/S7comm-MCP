@@ -275,14 +275,25 @@ async def test_bad_string_writes_change_nothing(
     assert after["data"] == before["data"]
 
 
-async def test_string_write_initialises_an_empty_slot(make_server: ServerFactory) -> None:
+async def test_string_write_needs_an_existing_matching_header(make_server: ServerFactory) -> None:
+    # Review finding 2: a 00 00 header used to be "initialised", planting a
+    # STRING header over non-STRING data (here a DINT).
     server = make_server(writes=True)
-    result = await call(
-        server, "write_db", db_number=2, start_offset=60, value="Line 3", data_type="STRING", string_length=12
-    )
-    assert result["success"] is True, result
-    read = await call(server, "read_db_typed", db_number=2, start_offset=60, data_type="STRING", string_length=12)
-    assert read["data"]["value"] == "Line 3"
+    assert (await call(server, "write_db", db_number=2, start_offset=60, value="0000000c2238"))["success"]
+    for value, string_length in [("HACK", 20), ("", 254)]:
+        result = await call(
+            server,
+            "write_db",
+            db_number=2,
+            start_offset=60,
+            value=value,
+            data_type="STRING",
+            string_length=string_length,
+        )
+        assert result["success"] is False
+        assert "no S7 STRING header" in result["error"] and "Nothing was written" in result["error"]
+        after = await call(server, "read_db", db_number=2, start_offset=60, size=6)
+        assert after["data"]["raw_bytes_hex"] == "0000000c2238"
 
 
 # ------------------------------------------------------------- typed writes and validation

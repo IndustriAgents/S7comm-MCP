@@ -483,6 +483,25 @@ async def read_value(client: S7Client, addr: Address) -> tuple[dict[str, Any], O
     return data, meta
 
 
+def check_string_header(header: bytes, declared: int) -> None:
+    """Refuse a STRING write unless the PLC already holds a STRING[declared] there.
+
+    There is no "initialise" mode: a header of 00 00 is not a STRING[N], and
+    writing one would plant a STRING header over whatever data is there.
+    """
+    plc_max, plc_cur = header[0], header[1]
+    if plc_max != declared:
+        hint = " (no S7 STRING header at this address)" if plc_max == 0 else "; check the offset and string_length"
+        raise ValueError(
+            f"The STRING header at this address declares a max length of {plc_max}, not {declared}{hint}. "
+            "Nothing was written"
+        )
+    if plc_cur > plc_max:
+        raise ValueError(
+            "No valid S7 STRING header at this address (current length exceeds max length). Nothing was written"
+        )
+
+
 @dataclass(slots=True)
 class PreparedWrite:
     """A write whose value has already been validated and encoded."""
@@ -521,16 +540,7 @@ async def execute_write(client: S7Client, prepared: PreparedWrite) -> tuple[dict
     if prepared.kind == "string":
         declared = addr.string_length or 0
         header, _ = await client.read_area(addr.area, addr.offset, 2, addr.db_number)
-        plc_max, plc_cur = header[0], header[1]
-        if plc_max == 0 and plc_cur != 0:
-            raise ValueError("No valid S7 STRING header at this address (max length 0, current length not 0)")
-        if plc_max not in (0, declared):
-            raise ValueError(
-                f"The STRING header at this address declares a max length of {plc_max}, not {declared}; "
-                "nothing was written"
-            )
-        if plc_cur > plc_max:
-            raise ValueError("No valid S7 STRING header at this address (current length exceeds max length)")
+        check_string_header(header, declared)
         payload = bytes([declared, len(prepared.payload)]) + prepared.payload
         meta = await client.write_area(addr.area, addr.offset, payload, addr.db_number)
         data = {**addr.describe(), "value": prepared.payload.decode("latin-1"), "max_length": declared}
