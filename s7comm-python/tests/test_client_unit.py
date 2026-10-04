@@ -86,7 +86,7 @@ class FakeClient:
             raise TypeError("unsupported operand type(s) for 'in': 'int' and 'EnumType'")
         self.calls.append(("read_area", area, db_number, start, size))
         self._next()
-        return bytearray(range(size))
+        return bytearray(i & 0xFF for i in range(size))
 
     def write_area(self, area: Any, db_number: int, start: int, data: bytearray) -> None:
         assert isinstance(area, Area)
@@ -349,3 +349,48 @@ async def test_link_error_in_the_probe_reconnects_before_writing(fake_snap7: typ
     assert meta["attempts"] == 2
     writes = [call for fake in fake_snap7.instances for call in fake.calls if call[0] == "write_area"]
     assert len(writes) == 1 and len(fake_snap7.instances) == 2
+
+
+@pytest.mark.parametrize(
+    ("payload_size", "error", "expected"),
+    [
+        (4, b"CPU : Address out of range", "rejected"),
+        (4, b"CLI : function refused by CPU (Unknown error)", "rejected"),
+        (4, b"CLI : Partial data written", "unknown"),
+        (4, b"CLI : Invalid PLC answer", "unknown"),
+        (300, b"CPU : Address out of range", "unknown"),  # may span several PDUs
+        (300, b"CLI : Partial data written", "unknown"),
+    ],
+)
+async def test_errors_after_the_send_are_classified(
+    fake_snap7: type[FakeClient], payload_size: int, error: bytes, expected: str
+) -> None:
+    client = make_client(max_retries=3)
+    fake_snap7.script = [None, RuntimeError(error)]  # probe read passes, the write fails
+    with pytest.raises(OperationFailedError) as excinfo:
+        await client.write_db(1, 0, b"\x01" * payload_size)
+    assert (excinfo.value.outcome, excinfo.value.request_sent) == (expected, True)
+    if expected == "unknown":
+        assert "may have been applied" in str(excinfo.value)
+    writes = [call for fake in fake_snap7.instances for call in fake.calls if call[0] == "write_area"]
+    assert len(writes) == 1
+
+
+async def test_write_probe_reads_the_whole_target_range(fake_snap7: type[FakeClient]) -> None:
+    await make_client().write_db(4, 10, b"\x01" * 900)
+    reads = [call for call in fake_snap7.instances[0].calls if call[0] == "read_area"]
+    assert reads == [("read_area", Area.DB, 4, 10, 900)]
+
+
+async def test_failed_mode_poll_after_an_accepted_command_is_unknown(
+    fake_snap7: type[FakeClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = make_client()
+
+    async def broken_poll() -> Any:
+        raise OperationFailedError("read_cpu_state failed after 1 attempt(s): TCP : Connection refused")
+
+    monkeypatch.setattr(client, "read_cpu_state", broken_poll)
+    with pytest.raises(OperationFailedError, match="accepted the STOP command") as excinfo:
+        await client.set_cpu_state("STOP")
+    assert (excinfo.value.outcome, excinfo.value.request_sent) == ("unknown", True)

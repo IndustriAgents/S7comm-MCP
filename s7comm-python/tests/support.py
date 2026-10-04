@@ -93,6 +93,14 @@ class S7Proxy:
     ``drop_reply_to`` holds function codes whose request is forwarded to the PLC
     but whose reply is swallowed, after which the connection is closed: the
     request was applied, the client never hears back.
+
+    ``go_down_after_reply_to`` holds function codes whose request and reply are
+    forwarded, after which the proxy shuts down for good (the PLC confirmed the
+    request, then became unreachable).
+
+    ``refuse`` = (function code, n, item return code) answers the n-th such job
+    itself with that S7 item return code (e.g. 0x03 access denied) and does not
+    forward it: the PLC refused it and applied nothing.
     """
 
     def __init__(self, target_port: int, target_host: str = "127.0.0.1") -> None:
@@ -102,6 +110,8 @@ class S7Proxy:
         self.jobs: list[int] = []
         self.drop_reply_to: set[int] = set()
         self.drop_once = False
+        self.go_down_after_reply_to: set[int] = set()
+        self.refuse: tuple[int, int, int] | None = None
         self._sockets: list[socket.socket] = []
         self._lock = threading.Lock()
         self._listener = socket.socket()
@@ -167,7 +177,7 @@ class S7Proxy:
     def _pump_requests(self, client: socket.socket, server: socket.socket, state: dict[str, bool]) -> None:
         try:
             while (frame := self._read_frame(client)) is not None:
-                if len(frame) > 17 and frame[7] == 0x32 and frame[8] == 0x01:
+                if len(frame) > 18 and frame[7] == 0x32 and frame[8] == 0x01:
                     code = frame[17]
                     with self._lock:
                         self.jobs.append(code)
@@ -175,12 +185,35 @@ class S7Proxy:
                             state["drop_next_reply"] = True
                             if self.drop_once:
                                 self.drop_reply_to.discard(code)
+                        if code in self.go_down_after_reply_to:
+                            state["go_down_after_reply"] = True
+                        refuse = self.refuse is not None and self.refuse[0] == code
+                        refuse = refuse and self.jobs.count(code) == self.refuse[1]
+                    if refuse:
+                        client.sendall(self._refusal(frame, self.refuse[2]))
+                        continue
                 server.sendall(frame)
         except OSError:
             pass
         finally:
             server.close()
             client.close()
+
+    @staticmethod
+    def _refusal(request: bytes, return_code: int) -> bytes:
+        """An Ack_Data that refuses every item of ``request`` with ``return_code``."""
+        items = request[18]
+        s7 = (
+            bytes([0x32, 0x03, 0x00, 0x00])
+            + request[11:13]  # PDU reference of the request
+            + (2).to_bytes(2, "big")  # parameter length
+            + items.to_bytes(2, "big")  # data length: one return code per item
+            + bytes([0x00, 0x00])  # error class / code: the job itself was fine
+            + bytes([request[17], items])
+            + bytes([return_code] * items)
+        )
+        body = bytes([0x02, 0xF0, 0x80]) + s7
+        return bytes([0x03, 0x00]) + (len(body) + 4).to_bytes(2, "big") + body
 
     def _pump_replies(self, server: socket.socket, client: socket.socket, state: dict[str, bool]) -> None:
         try:
@@ -190,6 +223,10 @@ class S7Proxy:
                     client.shutdown(socket.SHUT_RDWR)
                     break
                 client.sendall(frame)
+                if state.get("go_down_after_reply") and len(frame) > 8 and frame[7] == 0x32 and frame[8] == 0x03:
+                    # The PLC confirmed the request; now it is unreachable.
+                    self.close()
+                    break
         except OSError:
             pass
         finally:

@@ -47,6 +47,7 @@ class MockS7Server:
         self.server = snap7.server.Server()  # type: ignore[attr-defined]
         self.db1 = bytearray(256)  # telemetry
         self.db2 = bytearray(128)  # alarms/config
+        self.db3 = bytearray(1024)  # bulk/recipe area, larger than one S7 PDU
         self.inputs = bytearray(8)
         self.outputs = bytearray(8)
         self.markers = bytearray(8)
@@ -54,6 +55,7 @@ class MockS7Server:
         # ctypes views used by snap7 server; backed by the bytearrays above.
         self._db1_buf = (ctypes.c_uint8 * len(self.db1)).from_buffer(self.db1)
         self._db2_buf = (ctypes.c_uint8 * len(self.db2)).from_buffer(self.db2)
+        self._db3_buf = (ctypes.c_uint8 * len(self.db3)).from_buffer(self.db3)
         self._inputs_buf = (ctypes.c_uint8 * len(self.inputs)).from_buffer(self.inputs)
         self._outputs_buf = (ctypes.c_uint8 * len(self.outputs)).from_buffer(self.outputs)
         self._markers_buf = (ctypes.c_uint8 * len(self.markers)).from_buffer(self.markers)
@@ -63,6 +65,7 @@ class MockS7Server:
     def _register_areas(self) -> None:
         self.server.register_area(SrvArea.DB, 1, self._db1_buf)
         self.server.register_area(SrvArea.DB, 2, self._db2_buf)
+        self.server.register_area(SrvArea.DB, 3, self._db3_buf)
         self.server.register_area(SrvArea.PE, 0, self._inputs_buf)
         self.server.register_area(SrvArea.PA, 0, self._outputs_buf)
         self.server.register_area(SrvArea.MK, 0, self._markers_buf)

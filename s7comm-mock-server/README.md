@@ -24,6 +24,7 @@ By default the mock listens on port `1102` on all interfaces (port 102, the real
 
 - DB1: Motor telemetry (REAL values, a DINT batch counter)
 - DB2: Alarms and configuration bits, a status STRING
+- DB3: A 1024-byte bulk area, larger than one PDU (for multi-PDU writes)
 - Inputs: Sensors toggling periodically
 - Outputs: Actuator commands (read/write)
 - Markers: A system marker bit

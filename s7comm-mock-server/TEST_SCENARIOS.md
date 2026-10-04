@@ -43,6 +43,9 @@ The automated suite follows these scenarios: `s7comm-python/tests/test_mcp_stdio
 - **Offset 0, Bit 0**: Alarm bit (BOOL) - Set to True
 - **Offset 2**: Status string (S7 `STRING[30]`) - "OK". In memory this is a max-length byte (30), a length byte (2), then the text padded with spaces.
 
+### DB3 (Bulk Area, 1024 bytes)
+- All zero at start. Larger than one S7 PDU, so writes of more than 452 bytes go out as several requests; used to test multi-PDU writes.
+
 ### Inputs (PE, 8 bytes)
 - **Byte 0, Bit 0**: Sensor 1 - Toggles periodically
 - **Byte 0, Bit 1**: Sensor 2 - Toggles periodically

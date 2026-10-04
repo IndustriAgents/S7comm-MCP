@@ -74,11 +74,11 @@ Every write (`write_db`, `write_output`, `write_marker`, `write_tag`, each `writ
 | `outcome` | `request_sent` | Meaning |
 |---|---|---|
 | `written` | true | The PLC confirmed it |
-| `rejected` | true | The PLC answered with an error; nothing was applied |
-| `unknown` | true | Sent, but the reply was lost (or RUN/STOP was accepted but the mode was not reached in time). It may have been applied: check before retrying. It is never resent automatically |
+| `rejected` | true | The CPU explicitly refused a request that fits in one PDU (up to 205 bytes, or a bit, or RUN/STOP); nothing was applied |
+| `unknown` | true | Anything else after the request went out: a lost or garbled reply, a longer write that failed part-way (it may be partly applied), or RUN/STOP accepted but its mode not confirmed (not reached in time, or the read-back failed). It may have been applied: check before retrying. It is never resent automatically |
 | `not_sent` | false | Stopped before the request went out: writes disabled, invalid arguments, a failed check, or an unreachable PLC |
 
-`write_multiple_vars` first checks every entry locally and then reads every target from the PLC (including STRING headers); if any check fails, nothing is written. The entries are then written in order, and the batch stops at the first `rejected` or `unknown` entry. Its `meta.outcome` is that entry's outcome.
+Before a write is sent, the server reads its whole target range from the PLC, so a range the PLC does not have is refused as `not_sent` instead of being partly written. `write_multiple_vars` first checks every entry locally and then reads every target from the PLC (including STRING headers); if any check fails, nothing is written. The entries are then written in order, and the batch stops at the first `rejected` or `unknown` entry. Its `meta.outcome` is that entry's outcome.
 
 ## Tag map
 

@@ -396,14 +396,26 @@ async def test_outcome_not_sent(make_server: ServerFactory) -> None:
     assert outcome(cpu) == ("not_sent", False)
 
 
-async def test_outcome_rejected(make_server: ServerFactory) -> None:
-    # The probe (byte 254) is fine; the 4-byte write runs past DB1's end and the PLC refuses it.
+async def test_out_of_range_write_is_caught_before_sending(make_server: ServerFactory) -> None:
+    # The pre-send probe reads the whole target range, so this never goes out.
     server = make_server()
     before = await read_hex(server, "db", 254, size=2, db=1)
     result = await call(server, "write_db", db_number=1, start_offset=254, value="01020304")
     assert result["success"] is False and "Address out of range" in result["error"]
-    assert outcome(result) == ("rejected", True)
+    assert outcome(result) == ("not_sent", False)
     assert await read_hex(server, "db", 254, size=2, db=1) == before
+
+
+@pytest.mark.parametrize(("return_code", "message"), [(0x05, "Address out of range"), (0x03, "refused by CPU")])
+async def test_outcome_rejected_when_the_plc_refuses(
+    make_server: ServerFactory, proxy: S7Proxy, direct: S7Client, return_code: int, message: str
+) -> None:
+    await direct.write_db(3, 0, b"\x00" * 4)
+    proxy.refuse = (S7_WRITE_VAR, 1, return_code)  # the PLC answers "no"; nothing is applied
+    result = await call(make_server(port=proxy.port), "write_db", db_number=3, start_offset=0, value="11223344")
+    assert result["success"] is False and message in result["error"]
+    assert outcome(result) == ("rejected", True)
+    assert (await direct.read_db(3, 0, 4))[0] == b"\x00" * 4
 
 
 async def test_batch_reports_the_outcome_per_entry(make_server: ServerFactory) -> None:
@@ -450,3 +462,72 @@ async def test_bool_value_must_be_a_boolean(make_server: ServerFactory) -> None:
             "output",
             1,
         )
+
+
+# ----------------------------------------------- addendum 1a: multi-PDU writes and confirmations
+
+
+async def test_multi_pdu_write_inside_the_area_is_written(make_server: ServerFactory, direct: S7Client) -> None:
+    server = make_server()
+    payload = bytes(range(256)) * 3 + bytes(100)  # 868 bytes: two requests at the mock's PDU size
+    result = await call(server, "write_db", db_number=3, start_offset=100, value=payload.hex())
+    assert result["success"] is True and outcome(result) == ("written", True)
+    assert (await direct.read_db(3, 100, len(payload)))[0] == payload
+
+
+async def test_multi_pdu_write_past_the_end_is_not_sent(make_server: ServerFactory, direct: S7Client) -> None:
+    # Review case: 900 bytes at offset 500 of a 1000+ byte DB used to apply the
+    # first 452 bytes and report "rejected ... nothing was applied".
+    await direct.write_db(3, 0, bytes(1024))
+    result = await call(make_server(), "write_db", db_number=3, start_offset=500, value="ab" * 900)
+    assert result["success"] is False and "Address out of range" in result["error"]
+    assert outcome(result) == ("not_sent", False)
+    assert (await direct.read_db(3, 0, 1024))[0] == bytes(1024)
+
+
+async def test_partial_multi_pdu_write_is_unknown(
+    make_server: ServerFactory, direct: S7Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Without the pre-send probe the PLC really applies the first chunk only
+    # ("CLI : Partial data written"); that must be "unknown", never "rejected".
+    await direct.write_db(3, 0, bytes(1024))
+    server = make_server()
+    real_execute = server.client._execute
+    monkeypatch.setattr(
+        server.client,
+        "_execute",
+        # Keep send-once semantics, but make the pre-send probe check nothing.
+        lambda name, op, probe=None, single_pdu=True: real_execute(name, op, lambda client: None, single_pdu),
+    )
+    result = await call(server, "write_db", db_number=3, start_offset=500, value="ab" * 900)
+    assert result["success"] is False and "Partial data written" in result["error"]
+    assert outcome(result) == ("unknown", True)
+    assert "may have been applied" in result["error"] and "check before retrying" in result["error"]
+    applied = (await direct.read_db(3, 500, 524))[0].count(0xAB)
+    assert 0 < applied < 524
+
+
+async def test_refused_second_chunk_is_unknown(make_server: ServerFactory, proxy: S7Proxy, direct: S7Client) -> None:
+    await direct.write_db(3, 0, bytes(1024))
+    proxy.refuse = (S7_WRITE_VAR, 2, 0x03)  # first chunk applied, second refused
+    result = await call(make_server(port=proxy.port), "write_db", db_number=3, start_offset=0, value="cd" * 900)
+    assert result["success"] is False and outcome(result) == ("unknown", True)
+    assert (await direct.read_db(3, 0, 900))[0].count(0xCD) == 452
+
+
+async def test_stop_accepted_then_link_lost_is_unknown(
+    make_server: ServerFactory, proxy: S7Proxy, direct: S7Client
+) -> None:
+    # Review case: the PLC confirmed STOP, then went unreachable during the mode
+    # poll; that was reported as not_sent.
+    proxy.go_down_after_reply_to = {S7_PLC_STOP}
+    server = make_server(writes=True, system=True, port=proxy.port)
+    try:
+        result = await call(server, "set_cpu_state", state="STOP")
+        assert result["success"] is False and outcome(result) == ("unknown", True)
+        assert "accepted the STOP command but its mode could not be read back" in result["error"]
+        assert "check before retrying" in result["error"]
+        assert proxy.count(S7_PLC_STOP) == 1
+        assert (await direct.read_cpu_state())[0]["mode"] == "STOP"
+    finally:
+        await direct.set_cpu_state("RUN")

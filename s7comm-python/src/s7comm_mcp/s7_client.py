@@ -60,6 +60,20 @@ CPU_MODES: dict[str, str] = {
 #: S7 addresses carry a 24-bit bit address, so byte offsets stop at 2**21 - 1.
 MAX_BYTE_OFFSET = 0x1FFFFF
 
+#: Largest write Snap7 always sends as one PDU: the smallest PDU an S7 CPU may
+#: negotiate is 240 bytes and the write headers take at most 35 of them. A
+#: longer write may be split into several requests (452-byte chunks at the
+#: mock's 480-byte PDU), and a failure part-way leaves it partly applied.
+SINGLE_PDU_WRITE_MAX = 240 - 35
+
+#: Snap7 errors that mean the PLC explicitly refused a request (a negative
+#: return code for it), so a single-PDU request was not applied.
+REFUSAL_MARKERS = ("CPU :", "CLI : FUNCTION REFUSED BY CPU")
+
+
+def is_refusal(message: str) -> bool:
+    return message.strip().upper().startswith(REFUSAL_MARKERS)
+
 
 @dataclass(slots=True)
 class S7ClientConfig:
@@ -120,9 +134,10 @@ class OperationFailedError(S7ClientError):
     """Raised when an S7 operation fails (after retries, for link errors).
 
     ``outcome`` says what happened to a write or CPU command: ``not_sent``
-    (refused or failed before the request went out), ``rejected`` (the PLC
-    answered with an error, so nothing was applied) or ``unknown`` (sent, but
-    no usable answer; it may have been applied).
+    (refused or failed before the request went out), ``rejected`` (the CPU
+    refused a single-PDU request, so nothing was applied) or ``unknown``
+    (sent, then anything else went wrong: a lost or garbled reply, a partly
+    applied multi-PDU write, a failed read-back; it may have been applied).
     """
 
     def __init__(self, message: str, *, outcome: str = "not_sent") -> None:
@@ -311,7 +326,11 @@ class S7Client:
             self._execute,
             label,
             lambda client: client.write_area(area_enum, db_number, start, bytearray(payload)),
-            lambda client: client.read_area(area_enum, db_number, start, 1),
+            # The probe reads the whole target range, so a range the PLC does
+            # not have is refused before anything is sent (a multi-PDU write
+            # would otherwise be applied up to the end of the area).
+            lambda client: client.read_area(area_enum, db_number, start, len(payload)),
+            len(payload) <= SINGLE_PDU_WRITE_MAX,
         )
         return meta
 
@@ -386,12 +405,21 @@ class S7Client:
             if "ALREADY" not in str(exc).upper():
                 raise
             meta = {"attempts": 1, "already_in_state": True}
+        # From here on the PLC has accepted the command: a failing poll must not
+        # turn that into "not sent".
         deadline = time.monotonic() + self.config.timeout
-        while True:
-            observed, _ = await self.read_cpu_state()
-            if observed["mode"] == normalized or time.monotonic() >= deadline:
-                break
-            await anyio.sleep(0.2)
+        try:
+            while True:
+                observed, _ = await self.read_cpu_state()
+                if observed["mode"] == normalized or time.monotonic() >= deadline:
+                    break
+                await anyio.sleep(0.2)
+        except Exception as exc:
+            raise OperationFailedError(
+                f"The PLC accepted the {normalized} command but its mode could not be read back "
+                f"({describe_error(exc)}); it may have been applied, check before retrying",
+                outcome="unknown",
+            ) from exc
         if observed["mode"] != normalized:
             raise OperationFailedError(
                 f"The PLC accepted the {normalized} command but still reports {observed['state']} "
@@ -480,7 +508,13 @@ class S7Client:
         with self._lock:
             self._reset_locked()
 
-    def _execute(self, op_name: str, operation: OpCallable, probe: OpCallable | None = None) -> OperationResult:
+    def _execute(
+        self,
+        op_name: str,
+        operation: OpCallable,
+        probe: OpCallable | None = None,
+        single_pdu: bool = True,
+    ) -> OperationResult:
         """Run ``operation`` on a connected client, reconnecting after link errors.
 
         Reads (no ``probe``) are simply repeated after a reconnect. Writes and
@@ -489,6 +523,11 @@ class S7Client:
         operation itself is sent at most once. If the link fails after it was
         sent, :class:`WriteOutcomeUnknownError` reports that it may have been
         applied, and nothing is resent.
+
+        After the send, only an explicit refusal by the CPU (see
+        :func:`is_refusal`) of a ``single_pdu`` request counts as "rejected"
+        (nothing applied). Anything else (a partial multi-PDU write, a garbled
+        answer, an unexpected client error) is "unknown".
         """
         start = time.perf_counter()
         attempt = 0
@@ -508,10 +547,15 @@ class S7Client:
                     message = describe_error(exc)
                     self._last_error = f"{op_name}: {message}"
                     if not is_link_error(exc):
-                        # The PLC (or argument checking) rejected this request;
-                        # the connection is still fine, so report it unchanged.
-                        raise OperationFailedError(
-                            f"{op_name} failed: {message}", outcome="rejected" if sent else "not_sent"
+                        # The connection is still fine; report the error unchanged.
+                        if not sent:
+                            raise OperationFailedError(f"{op_name} failed: {message}") from exc
+                        if single_pdu and is_refusal(message):
+                            raise OperationFailedError(f"{op_name} failed: {message}", outcome="rejected") from exc
+                        self._last_error = f"{op_name}: {message}; may have been applied"
+                        raise WriteOutcomeUnknownError(
+                            f"{op_name} failed after the request was sent ({message}). It may have been "
+                            "applied, possibly in part; check before retrying. It was not resent."
                         ) from exc
                     self._reset_locked()
                     if sent:

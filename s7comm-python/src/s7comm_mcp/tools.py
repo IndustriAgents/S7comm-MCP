@@ -560,10 +560,12 @@ async def execute_write(client: S7Client, prepared: PreparedWrite) -> tuple[dict
 def write_outcome(exc: BaseException | None = None) -> dict[str, Any]:
     """meta.outcome / meta.request_sent for a write or CPU command.
 
-    written: the PLC confirmed it. rejected: the PLC answered with an error, so
-    nothing was applied. unknown: sent, but no usable answer; it may have been
-    applied, so check before retrying. not_sent: stopped before the request
-    went out (disabled, invalid, or the PLC was unreachable).
+    written: the PLC confirmed it. rejected: the CPU refused a single-PDU
+    request, so nothing was applied. unknown: sent, then something else went
+    wrong (lost or garbled reply, partly applied multi-PDU write, failed mode
+    read-back); it may have been applied, so check before retrying. not_sent:
+    stopped before the request went out (disabled, invalid, failed pre-check,
+    or the PLC was unreachable).
     """
     outcome = "written" if exc is None else getattr(exc, "outcome", "not_sent")
     return {"outcome": outcome, "request_sent": outcome != "not_sent"}
