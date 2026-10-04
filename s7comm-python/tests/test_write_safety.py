@@ -613,3 +613,66 @@ async def test_close_interrupts_a_stuck_call(proxy: S7Proxy) -> None:
     task.cancel()
     with pytest.raises((asyncio.CancelledError, Exception)):
         await task
+
+
+# ----------------------------------------------- one absolute deadline per tool call (review round 4)
+
+
+def slow_reads_server(proxy: S7Proxy, delay: float, deadline: float, timeout: float) -> S7CommMCPServer:
+    proxy.delay_reply_to = {S7_READ_VAR: delay}  # every read (and pre-send check) takes `delay`
+    client = S7Client(
+        S7ClientConfig(port=proxy.port, timeout=timeout, max_retries=0, retry_backoff_base=0, request_deadline=deadline)
+    )
+    return S7CommMCPServer(client=client, tool_config=ToolConfig(writes_enabled=True))
+
+
+async def test_b_string_write_cannot_land_after_the_tool_calls_deadline(proxy: S7Proxy, direct: S7Client) -> None:
+    # Review case B: header read and pre-send check each got a fresh deadline, so
+    # the WRITE went out at 3.58 s with a 3.0 s deadline. Here: two 2.5 s reads
+    # (header, then the check before the send) against one 3.0 s deadline.
+    before = (await direct.read_db(2, 2, 32))[0]
+    server = slow_reads_server(proxy, delay=2.5, deadline=3.0, timeout=2.8)
+    started = time.monotonic()
+    try:
+        result = await call(
+            server, "write_db", db_number=2, start_offset=2, value="LATE", data_type="STRING", string_length=30
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        await server.client.close()
+    assert elapsed < 3.0 + 0.5
+    assert result["success"] is False and outcome(result) == ("not_sent", False), result
+    assert "deadline" in result["error"]
+    time.sleep(3.0)  # long after: the abandoned request must still not have been sent
+    assert proxy.count(S7_WRITE_VAR) == 0
+    assert (await direct.read_db(2, 2, 32))[0] == before
+
+
+async def test_c_batch_entries_past_the_deadline_are_not_sent(proxy: S7Proxy, direct: S7Client) -> None:
+    # Review case C: both WRITEs of a 2-entry batch landed after its deadline.
+    # Here every read takes 1.0 s against one 3.5 s deadline: two pre-checks
+    # (2.0 s), entry 0's check (3.0 s) and write fit; entry 1's check cannot.
+    await direct.write_db(3, 320, b"\x00\x00")
+    server = slow_reads_server(proxy, delay=1.0, deadline=3.5, timeout=1.5)
+    started = time.monotonic()
+    try:
+        result = await call(
+            server,
+            "write_multiple_vars",
+            variables=[
+                {"db_number": 3, "offset": 320, "value": 1, "data_type": "BYTE"},
+                {"db_number": 3, "offset": 321, "value": 2, "data_type": "BYTE"},
+            ],
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        await server.client.close()
+    assert elapsed < 3.5 + 0.5
+    first, second = result["data"]["results"]
+    assert first["outcome"] == "written" and first["success"] is True
+    assert (second["outcome"], second["request_sent"]) == ("not_sent", False)
+    assert "deadline" in second["error"]
+    assert result["success"] is False
+    time.sleep(2.0)
+    assert proxy.count(S7_WRITE_VAR) == 1
+    assert (await direct.read_db(3, 320, 2))[0] == b"\x01\x00"

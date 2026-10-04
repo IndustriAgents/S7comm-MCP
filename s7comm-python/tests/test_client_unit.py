@@ -441,7 +441,7 @@ async def test_a_hung_read_ends_with_a_clean_error_at_the_deadline(fake_snap7: t
     done = threading.Event()
     fake_snap7.script = [hang(3.0, done)]
     started = time.monotonic()
-    with pytest.raises(OperationFailedError, match="no answer within the 1.6s deadline"):
+    with pytest.raises(OperationFailedError, match="no answer within the tool call's 1.6s deadline"):
         await client.read_db(1, 0, 4)
     assert time.monotonic() - started < 2.5
     done.wait(5)
@@ -594,4 +594,28 @@ async def test_disconnect_cancels_a_queued_write(fake_snap7: type[FakeClient]) -
     assert excinfo.value.outcome == "not_sent"
     await stuck_read  # it was already executing, so it simply completes
     done.wait(5)
+    assert all_calls(fake_snap7, "write_area") == 0
+
+
+# ------------------------------------------------------------- one deadline per tool call
+
+
+def test_begin_send_refuses_after_the_deadline() -> None:
+    from s7comm_mcp.s7_client import _Call
+
+    late = _Call(not_after=time.monotonic() - 0.01)
+    assert late.begin_send() is False and late.expired and not late.sent
+    timely = _Call(not_after=time.monotonic() + 10)
+    assert timely.begin_send() is True and timely.sent
+
+
+async def test_requests_in_one_tool_call_share_one_deadline(fake_snap7: type[FakeClient]) -> None:
+    client = fast_client()  # 1.6 s per tool call
+    fake_snap7.script = [hang(1.0), hang(1.0)]  # a header-like read, then a slow pre-send check
+    with client.tool_call():
+        await client.read_db(1, 0, 2)  # 1.0 s of the call's 1.6 s
+        with pytest.raises(OperationFailedError) as excinfo:
+            await client.write_db(1, 0, b"\x01")  # would end at 2.0 s: past the call's deadline
+    assert excinfo.value.outcome == "not_sent"
+    time.sleep(1.2)  # let the abandoned worker finish its check
     assert all_calls(fake_snap7, "write_area") == 0

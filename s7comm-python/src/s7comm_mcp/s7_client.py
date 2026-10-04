@@ -18,7 +18,9 @@ import math
 import socket
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -287,22 +289,33 @@ def _identity_from_szl(records_hex: list[str]) -> tuple[str | None, str | None]:
     return order_code, version
 
 
+#: When the current MCP tool call started (time.monotonic()); see S7Client.tool_call().
+_TOOL_CALL_STARTED: ContextVar[float | None] = ContextVar("s7comm_tool_call_started", default=None)
+
+
 class _Call:
     """Handshake between the async caller and the worker thread of one request.
 
     The worker cannot be killed when the caller's deadline expires, so it must
     not send the request afterwards: begin_send() and cancel() decide, under
-    one lock, whether the request went out before the caller gave up.
+    one lock, whether the request went out before the caller gave up. A send
+    attempted after ``not_after`` (the tool call's absolute deadline) is also
+    refused.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, not_after: float = math.inf) -> None:
         self._lock = threading.Lock()
+        self.not_after = not_after
         self.cancelled = False
+        self.expired = False
         self.sent = False
 
     def begin_send(self) -> bool:
         with self._lock:
             if self.cancelled:
+                return False
+            if time.monotonic() >= self.not_after:
+                self.cancelled = self.expired = True
                 return False
             self.sent = True
             return True
@@ -380,6 +393,25 @@ class S7Client:
         cap = self.config.request_deadline + 2 * self.config.timeout * (chunks - 1)
         return min(worst_case, cap)
 
+    @contextmanager
+    def tool_call(self) -> Iterator[None]:
+        """Scope of one MCP tool call: all its PLC requests share one absolute deadline.
+
+        A tool call may make several requests (a STRING header read and the
+        write, a batch's pre-checks and writes, a CPU command and its mode
+        poll). The deadline counts from the start of the call, including any
+        wait for the client lock, and is never restarted per request. Nested
+        scopes keep the outermost start.
+        """
+        if _TOOL_CALL_STARTED.get() is not None:
+            yield
+            return
+        token = _TOOL_CALL_STARTED.set(time.monotonic())
+        try:
+            yield
+        finally:
+            _TOOL_CALL_STARTED.reset(token)
+
     async def _run(
         self,
         op_name: str,
@@ -396,18 +428,27 @@ class S7Client:
         read fails with a clean error. The connection is reset before the next
         request.
         """
-        call = _Call()
+        started = _TOOL_CALL_STARTED.get()
+        if started is None:  # a request outside a tool call is its own scope
+            started = time.monotonic()
+        deadline = self.request_deadline(size)
+        not_after = started + deadline
+        call = _Call(not_after)
         with self._calls_lock:
             if self._closing:
                 raise OperationFailedError(f"{op_name}: the MCP client disconnected; the request was not sent")
             self._pending_calls.add(call)
-        deadline = self.request_deadline(size)
         try:
-            with anyio.fail_after(deadline):
+            with anyio.fail_after(max(0.0, not_after - time.monotonic())):
                 return await anyio.to_thread.run_sync(
                     self._execute, op_name, operation, probe, single_pdu, call, abandon_on_cancel=True
                 )
         except _Abandoned:
+            if call.expired:
+                raise OperationFailedError(
+                    f"{op_name}: the tool call's {deadline:g}s deadline passed before the request could be sent; "
+                    "it was not sent"
+                ) from None
             # Cancelled (client cancel or disconnect) before the request went out.
             raise OperationFailedError(
                 f"{op_name}: cancelled before it was sent (the MCP client cancelled the call or "
@@ -417,7 +458,7 @@ class S7Client:
             sent = call.cancel()
             self._reset_requested = True
             self._interrupt(call)
-            message = f"{op_name}: no answer within the {deadline:g}s deadline"
+            message = f"{op_name}: no answer within the tool call's {deadline:g}s deadline"
             self._last_error = message
             if probe is not None and sent:
                 raise WriteOutcomeUnknownError(

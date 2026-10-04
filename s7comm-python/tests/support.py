@@ -122,6 +122,8 @@ class S7Proxy:
         # trickle_reply_to: the reply is swallowed and replaced by COTP fragments
         # that never complete, sent every 0.3 s (Snap7 then waits forever).
         self.trickle_reply_to: set[int] = set()
+        # delay_reply_to: function code -> seconds every reply to such a job is held.
+        self.delay_reply_to: dict[int, float] = {}
         self.refuse: tuple[int, int, int] | None = None
         self._sockets: list[socket.socket] = []
         self._lock = threading.Lock()
@@ -201,6 +203,8 @@ class S7Proxy:
                         if code in self.hold_reply_to:
                             self.hold_reply_to.discard(code)
                             state["hold_next_reply"] = True
+                        if code in self.delay_reply_to:
+                            state["delay_next_reply"] = self.delay_reply_to[code]
                         if code in self.trickle_reply_to:
                             state["trickle"] = True
                             threading.Thread(target=self._trickle, args=(client,), daemon=True).start()
@@ -245,6 +249,9 @@ class S7Proxy:
             while (frame := self._read_frame(server)) is not None:
                 if state.get("trickle"):
                     continue  # the real reply is swallowed; _trickle feeds the client
+                if state.get("delay_next_reply") and len(frame) > 8 and frame[7] == 0x32 and frame[8] == 0x03:
+                    time.sleep(state["delay_next_reply"])  # a slow PLC
+                    state["delay_next_reply"] = 0
                 if state.get("hold_next_reply") and len(frame) > 8 and frame[7] == 0x32 and frame[8] == 0x03:
                     state["hold_next_reply"] = False
                     self.release.wait(30)

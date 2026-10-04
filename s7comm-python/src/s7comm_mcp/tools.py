@@ -7,6 +7,7 @@ Bad arguments, PLC errors and connection problems all come back as
 
 from __future__ import annotations
 
+import functools
 import inspect
 import json
 import logging
@@ -606,7 +607,14 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         if not (fn.__doc__ or "").strip():
             raise ValueError(f"tool {fn.__name__} needs a docstring")
         hints = WRITE_HINTS if fn.__name__ in WRITE_TOOLS else READ_ONLY_HINTS
-        return server.tool(description=inspect.cleandoc(fn.__doc__ or ""), annotations=hints)(fn)
+
+        @functools.wraps(fn)
+        async def within_one_deadline(*args: Any, **kwargs: Any) -> Envelope:
+            # Every PLC request this call makes shares one absolute deadline.
+            with client.tool_call():
+                return await fn(*args, **kwargs)
+
+        return server.tool(description=inspect.cleandoc(fn.__doc__ or ""), annotations=hints)(within_one_deadline)
 
     def _writes_refused(tool: str) -> Envelope | None:
         if resources.config.writes_enabled:
