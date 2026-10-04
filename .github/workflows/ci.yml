@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Cheap, deterministic checks only. Nothing here needs a PLC or the mock to be
+# running: the MCP server connects to the PLC at startup, so starting it is a
+# smoke test for a workstation, not for CI. Both projects install from their
+# committed uv.lock with --locked, so a dependency change that forgot to update
+# the lockfile fails here.
+jobs:
+  server:
+    name: MCP server (s7comm-python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: s7comm-python
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies from uv.lock
+        run: uv sync --locked
+
+      - name: Byte-compile sources
+        run: uv run --no-sync python -m compileall -q src
+
+      # Builds the FastMCP server and registers every tool. This loads the
+      # bundled Snap7 native library but opens no connection.
+      - name: Import package and register tools
+        run: |
+          uv run --no-sync python - <<'EOF'
+          import asyncio
+
+          import snap7
+
+          from s7comm_mcp import S7CommMCPServer
+          from s7comm_mcp.cli import main  # noqa: F401  (console entry point)
+
+          snap7.client.Client().destroy()
+          server = S7CommMCPServer()
+          tools = asyncio.run(server._mcp.list_tools())
+          assert tools, "no MCP tools registered"
+          print(f"{len(tools)} tools registered: " + ", ".join(t.name for t in tools))
+          EOF
+
+  mock:
+    name: Mock PLC (s7comm-mock-server)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: s7comm-mock-server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies from uv.lock
+        run: uv sync --locked
+
+      - name: Byte-compile sources
+        run: uv run --no-sync python -m compileall -q s7_mock_server.py
+
+      - name: Console entry point
+        run: uv run --no-sync s7comm-mock-server --help

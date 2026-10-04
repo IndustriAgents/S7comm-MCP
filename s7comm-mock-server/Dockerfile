@@ -1,17 +1,21 @@
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_LINK_MODE=copy
 
 WORKDIR /app
 
-COPY pyproject.toml README.md s7_mock_server.py ./
+RUN pip install --no-cache-dir uv
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libsnap7-1 libsnap7-dev \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir anyio python-snap7 rich python-dotenv
+# Install exactly what uv.lock pins. The python-snap7 2.x wheel bundles the
+# Snap7 native library, so no system packages are needed. Do not replace this
+# with an unpinned pip install: the python-snap7 3.x server serves empty areas
+# and the mock's memory map reads back as zeros.
+COPY pyproject.toml uv.lock README.md s7_mock_server.py ./
+RUN uv sync --locked --no-dev
 
 EXPOSE 1102
 
-CMD ["python", "s7_mock_server.py"]
+CMD ["uv", "run", "--no-sync", "s7comm-mock-server"]

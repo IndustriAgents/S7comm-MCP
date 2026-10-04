@@ -103,7 +103,7 @@ dependencies = [
 requires-dist = [
     { name = "anyio", specifier = ">=4.0.0" },
     { name = "python-dotenv", specifier = ">=1.1.0" },
-    { name = "python-snap7", specifier = ">=1.3.0" },
+    { name = "python-snap7", specifier = ">=2.0,<3" },
     { name = "rich", specifier = ">=13.7.0" },
 ]
 
