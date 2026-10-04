@@ -20,7 +20,14 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from .config import env_bool, env_str
-from .s7_client import MAX_BYTE_OFFSET, OperationMeta, S7Client, S7ClientError, describe_error
+from .s7_client import (
+    MAX_BYTE_OFFSET,
+    OperationMeta,
+    S7Client,
+    S7ClientError,
+    WriteOutcomeUnknownError,
+    describe_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -537,6 +544,23 @@ def prepare_write(addr: Address, value: Any) -> PreparedWrite:
     return PreparedWrite(addr, "bytes", payload=encode_scalar(value, dtype))
 
 
+async def precheck_write(client: S7Client, prepared: PreparedWrite) -> None:
+    """Read the target of a prepared write from the PLC without writing anything.
+
+    Confirms that the whole range exists and is readable and, for STRING, that
+    the header matches string_length. Used by write_multiple_vars so that a
+    batch is refused as a whole before its first write.
+    """
+    addr = prepared.address
+    if prepared.kind == "string":
+        declared = addr.string_length or 0
+        payload, _ = await client.read_area(addr.area, addr.offset, 2 + declared, addr.db_number)
+        check_string_header(payload[:2], declared)
+        return
+    size = 1 if prepared.kind == "bit" else len(prepared.payload)
+    await client.read_area(addr.area, addr.offset, size, addr.db_number)
+
+
 async def execute_write(client: S7Client, prepared: PreparedWrite) -> tuple[dict[str, Any], OperationMeta]:
     addr = prepared.address
     if prepared.kind == "bit":
@@ -925,9 +949,12 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
 
         Entries use the read_multiple_vars address keys plus value, with the
         write_db rules (BOOL needs a bit and writes only that bit; STRING needs
-        string_length). Every entry is validated first and nothing is written if
-        any is invalid. Entries are then written in order; on the first PLC error
-        the rest are skipped. success is true only if every entry was written.
+        string_length; inputs are read-only). Every entry is checked before
+        anything is written: values and addresses locally, then each target
+        range is read from the PLC (STRING headers included). If any check fails,
+        nothing is written. Entries are then written in order, each sent once; on
+        the first PLC error or lost reply the rest are skipped. success is true
+        only if every entry was written.
         """
         refused = _writes_refused("write_multiple_vars")
         if refused:
@@ -946,6 +973,14 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
             except Exception as exc:
                 prepared.append(None)
                 results.append({"index": index, "spec": spec, "success": False, "error": _error_text(exc)})
+        if not any(item["success"] is False for item in results):
+            # Second pass, still read-only: every target exists on the PLC and
+            # every STRING header matches, before the first write goes out.
+            for item, job in zip(results, prepared, strict=True):
+                try:
+                    await precheck_write(client, job)  # type: ignore[arg-type]
+                except Exception as exc:
+                    item.update(success=False, error=_error_text(exc))
         invalid = sum(1 for item in results if item["success"] is False)
         if invalid:
             for item in results:
@@ -964,6 +999,10 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
                 continue
             try:
                 entry, _ = await execute_write(client, job)  # type: ignore[arg-type]
+            except WriteOutcomeUnknownError as exc:
+                item.update(success=False, outcome_unknown=True, error=_error_text(exc))
+                failure = str(index)
+                continue
             except Exception as exc:
                 item.update(success=False, error=_error_text(exc))
                 failure = str(index)
@@ -972,8 +1011,15 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
             written += 1
         meta = {"count": len(results), "written": written}
         if failure is not None:
+            failed_item = results[int(failure)]
+            what = (
+                "got no reply and may have been applied (it was not resent)"
+                if failed_item.get("outcome_unknown")
+                else "failed"
+            )
             return fail(
-                f"Entry {failure} failed; {written} of {len(results)} entries were written",
+                f"Entry {failure} {what}; {written} of {len(results)} entries were written before it, "
+                "the rest were skipped",
                 meta,
                 data={"results": results},
             )

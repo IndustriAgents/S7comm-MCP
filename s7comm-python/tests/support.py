@@ -76,3 +76,122 @@ async def call(server: Any, tool: str, /, **arguments: Any) -> dict[str, Any]:
     result = await server._mcp.call_tool(tool, arguments)
     _content, structured = result
     return structured
+
+
+# S7comm function codes (first parameter byte of a Job PDU).
+S7_READ_VAR = 0x04
+S7_WRITE_VAR = 0x05
+S7_PLC_START = 0x28
+S7_PLC_STOP = 0x29
+
+
+class S7Proxy:
+    """A TCP proxy in front of the mock PLC that counts and can sabotage S7 jobs.
+
+    Frames are TPKT (4 bytes, length-prefixed) + COTP DT (3 bytes) + S7. For a
+    Job PDU (protocol id 0x32, ROSCTR 1) the function code is at frame[17].
+    ``drop_reply_to`` holds function codes whose request is forwarded to the PLC
+    but whose reply is swallowed, after which the connection is closed: the
+    request was applied, the client never hears back.
+    """
+
+    def __init__(self, target_port: int, target_host: str = "127.0.0.1") -> None:
+        import threading
+
+        self.target = (target_host, target_port)
+        self.jobs: list[int] = []
+        self.drop_reply_to: set[int] = set()
+        self.drop_once = False
+        self._sockets: list[socket.socket] = []
+        self._lock = threading.Lock()
+        self._listener = socket.socket()
+        self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._listener.bind(("127.0.0.1", 0))
+        self._listener.listen(8)
+        self.port = self._listener.getsockname()[1]
+        self._closed = False
+        threading.Thread(target=self._accept_loop, daemon=True).start()
+
+    def count(self, function_code: int) -> int:
+        with self._lock:
+            return self.jobs.count(function_code)
+
+    def kill_connections(self) -> None:
+        """Drop every open connection (a PLC reboot or a cable pull while idle)."""
+        with self._lock:
+            sockets, self._sockets = self._sockets, []
+        for sock in sockets:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            sock.close()
+
+    def close(self) -> None:
+        self._closed = True
+        self._listener.close()
+        self.kill_connections()
+
+    @staticmethod
+    def _read_frame(sock: socket.socket) -> bytes | None:
+        header = b""
+        while len(header) < 4:
+            chunk = sock.recv(4 - len(header))
+            if not chunk:
+                return None
+            header += chunk
+        length = int.from_bytes(header[2:4], "big")
+        body = b""
+        while len(body) < length - 4:
+            chunk = sock.recv(length - 4 - len(body))
+            if not chunk:
+                return None
+            body += chunk
+        return header + body
+
+    def _accept_loop(self) -> None:
+        import threading
+
+        while not self._closed:
+            try:
+                client, _ = self._listener.accept()
+            except OSError:
+                return
+            server = socket.create_connection(self.target)
+            with self._lock:
+                self._sockets += [client, server]
+            state = {"drop_next_reply": False}
+            threading.Thread(target=self._pump_requests, args=(client, server, state), daemon=True).start()
+            threading.Thread(target=self._pump_replies, args=(server, client, state), daemon=True).start()
+
+    def _pump_requests(self, client: socket.socket, server: socket.socket, state: dict[str, bool]) -> None:
+        try:
+            while (frame := self._read_frame(client)) is not None:
+                if len(frame) > 17 and frame[7] == 0x32 and frame[8] == 0x01:
+                    code = frame[17]
+                    with self._lock:
+                        self.jobs.append(code)
+                        if code in self.drop_reply_to:
+                            state["drop_next_reply"] = True
+                            if self.drop_once:
+                                self.drop_reply_to.discard(code)
+                server.sendall(frame)
+        except OSError:
+            pass
+        finally:
+            server.close()
+            client.close()
+
+    def _pump_replies(self, server: socket.socket, client: socket.socket, state: dict[str, bool]) -> None:
+        try:
+            while (frame := self._read_frame(server)) is not None:
+                if state["drop_next_reply"] and len(frame) > 8 and frame[7] == 0x32 and frame[8] == 0x03:
+                    # The PLC applied the request; the reply is lost with the link.
+                    client.shutdown(socket.SHUT_RDWR)
+                    break
+                client.sendall(frame)
+        except OSError:
+            pass
+        finally:
+            client.close()
+            server.close()

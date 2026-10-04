@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from support import MockPLC, call
+from support import S7_PLC_STOP, S7_READ_VAR, S7_WRITE_VAR, MockPLC, S7Proxy, call
 
-from s7comm_mcp.s7_client import S7Client, S7ClientConfig
+from s7comm_mcp.s7_client import S7Client, S7ClientConfig, WriteOutcomeUnknownError
 from s7comm_mcp.server import S7CommMCPServer
 from s7comm_mcp.tools import ToolConfig
 
@@ -24,9 +24,15 @@ ServerFactory = Callable[..., S7CommMCPServer]
 async def make_server(mock_plc: MockPLC, clean_env: pytest.MonkeyPatch) -> AsyncIterator[ServerFactory]:
     servers: list[S7CommMCPServer] = []
 
-    def factory(writes: bool = True, system: bool = False, tag_map: Path | None = None) -> S7CommMCPServer:
+    def factory(
+        writes: bool = True, system: bool = False, tag_map: Path | None = None, port: int | None = None
+    ) -> S7CommMCPServer:
         config = S7ClientConfig(
-            host=mock_plc.host, port=mock_plc.port, timeout=2.0, max_retries=1, retry_backoff_base=0
+            host=mock_plc.host,
+            port=port or mock_plc.port,
+            timeout=0.5 if port else 2.0,  # a lost reply costs one receive timeout
+            max_retries=3,
+            retry_backoff_base=0,
         )
         server = S7CommMCPServer(
             client=S7Client(config),
@@ -222,3 +228,140 @@ async def test_client_refuses_input_writes(mock_plc: MockPLC) -> None:
         assert payload == b"\x00"
     finally:
         await client.close()
+
+
+# ----------------------------------------------- finding 5: batch checks happen before any write
+
+
+async def test_batch_string_header_mismatch_writes_nothing(make_server: ServerFactory) -> None:
+    # Review case: entry 0 used to be written before entry 1's STRING header was checked.
+    server = make_server()
+    assert (await call(server, "write_db", db_number=1, start_offset=170, value="00"))["success"]
+    result = await call(
+        server,
+        "write_multiple_vars",
+        variables=[
+            {"db_number": 1, "offset": 170, "value": 7, "data_type": "BYTE"},
+            {"db_number": 2, "offset": 2, "value": "x", "data_type": "STRING", "string_length": 29},
+        ],
+    )
+    assert result["success"] is False and result["error"].startswith("Nothing was written")
+    assert result["meta"]["written"] == 0
+    assert "max length of 30, not 29" in result["data"]["results"][1]["error"]
+    assert await read_hex(server, "db", 170, db=1) == "00"
+
+
+# ----------------------------------------------- suite rule: a write reaches the PLC at most once
+
+
+@pytest.fixture
+def proxy(mock_plc: MockPLC) -> Any:
+    plc_proxy = S7Proxy(mock_plc.port)
+    yield plc_proxy
+    plc_proxy.close()
+
+
+@pytest.fixture
+async def direct(mock_plc: MockPLC) -> AsyncIterator[S7Client]:
+    """A second client straight to the mock, to see what the PLC really holds."""
+    client = S7Client(S7ClientConfig(host=mock_plc.host, port=mock_plc.port, max_retries=0))
+    yield client
+    await client.close()
+
+
+def via_proxy(proxy: S7Proxy, retries: int = 3) -> S7Client:
+    return S7Client(S7ClientConfig(port=proxy.port, timeout=0.5, max_retries=retries, retry_backoff_base=0))
+
+
+async def test_lost_write_reply_is_reported_and_not_resent(proxy: S7Proxy, direct: S7Client) -> None:
+    await direct.write_db(1, 180, b"\x00\x00")
+    client = via_proxy(proxy)
+    proxy.drop_reply_to = {S7_WRITE_VAR}
+    try:
+        with pytest.raises(WriteOutcomeUnknownError, match="may have been applied; it was not resent"):
+            await client.write_db(1, 180, b"\xbe\xef")
+    finally:
+        await client.close()
+    assert proxy.count(S7_WRITE_VAR) == 1  # despite S7_MAX_RETRIES=3
+    assert (await direct.read_db(1, 180, 2))[0] == b"\xbe\xef"  # it was applied
+    assert client.connection_status()["connected"] is False
+
+
+async def test_lost_bit_write_reply_is_not_resent(proxy: S7Proxy, direct: S7Client) -> None:
+    await direct.write_area("output", 6, b"\x00")
+    client = via_proxy(proxy)
+    proxy.drop_reply_to = {S7_WRITE_VAR}
+    try:
+        with pytest.raises(WriteOutcomeUnknownError):
+            await client.write_bit("output", 6, 4, True)
+    finally:
+        await client.close()
+    assert proxy.count(S7_WRITE_VAR) == 1
+    assert (await direct.read_area("output", 6, 1))[0] == b"\x10"
+
+
+async def test_lost_cpu_command_reply_is_not_resent(proxy: S7Proxy, direct: S7Client) -> None:
+    client = via_proxy(proxy)
+    proxy.drop_reply_to = {S7_PLC_STOP}
+    try:
+        with pytest.raises(WriteOutcomeUnknownError):
+            await client.set_cpu_state("STOP")
+        assert proxy.count(S7_PLC_STOP) == 1
+        assert (await direct.read_cpu_state())[0]["mode"] == "STOP"
+    finally:
+        await client.close()
+        await direct.set_cpu_state("RUN")
+
+
+async def test_reads_may_be_retried(proxy: S7Proxy) -> None:
+    client = via_proxy(proxy)
+    proxy.drop_reply_to, proxy.drop_once = {S7_READ_VAR}, True
+    try:
+        payload, meta = await client.read_db(1, 4, 4)
+    finally:
+        await client.close()
+    assert payload == bytes.fromhex("42280000") and meta["attempts"] == 2
+    assert proxy.count(S7_READ_VAR) == 2
+
+
+async def test_write_after_a_dead_idle_link_is_sent_once(proxy: S7Proxy, direct: S7Client) -> None:
+    # The link died while idle (PLC reboot, cable): the probe read finds out,
+    # the client reconnects, and only then is the write sent, once.
+    client = via_proxy(proxy)
+    try:
+        await client.read_db(1, 4, 4)
+        proxy.kill_connections()
+        meta = await client.write_db(1, 184, b"\x12\x34")
+    finally:
+        await client.close()
+    assert meta["attempts"] == 2
+    assert proxy.count(S7_WRITE_VAR) == 1
+    assert (await direct.read_db(1, 184, 2))[0] == b"\x12\x34"
+
+
+async def test_tools_report_an_unknown_outcome(make_server: ServerFactory, proxy: S7Proxy, direct: S7Client) -> None:
+    server = make_server(port=proxy.port)
+    proxy.drop_reply_to = {S7_WRITE_VAR}
+    result = await call(server, "write_db", db_number=1, start_offset=188, value=7, data_type="INT")
+    assert result["success"] is False
+    assert "no reply from the PLC" in result["error"] and "not resent" in result["error"]
+    assert proxy.count(S7_WRITE_VAR) == 1
+
+
+async def test_batch_stops_at_an_unknown_outcome(make_server: ServerFactory, proxy: S7Proxy, direct: S7Client) -> None:
+    await direct.write_db(1, 192, b"\x00\x00")
+    server = make_server(port=proxy.port)
+    proxy.drop_reply_to = {S7_WRITE_VAR}
+    result = await call(
+        server,
+        "write_multiple_vars",
+        variables=[
+            {"db_number": 1, "offset": 192, "value": 1, "data_type": "BYTE"},
+            {"db_number": 1, "offset": 193, "value": 2, "data_type": "BYTE"},
+        ],
+    )
+    assert result["success"] is False and "may have been applied" in result["error"]
+    first, second = result["data"]["results"]
+    assert first["outcome_unknown"] is True and second["skipped"] is True
+    assert proxy.count(S7_WRITE_VAR) == 1
+    assert (await direct.read_db(1, 192, 2))[0] == b"\x01\x00"

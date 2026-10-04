@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 from support import MockPLC, call
 
-from s7comm_mcp.s7_client import S7Client, S7ClientConfig, S7ConnectionError
+from s7comm_mcp.s7_client import OperationFailedError, S7Client, S7ClientConfig, S7ConnectionError
 from s7comm_mcp.server import S7CommMCPServer
 from s7comm_mcp.tools import ToolConfig
 
@@ -407,24 +407,52 @@ async def test_invalid_batch_entry_means_nothing_is_written(make_server: ServerF
     assert (await call(server, "read_db", db_number=1, start_offset=150, size=2))["data"]["raw_bytes_hex"] == "0000"
 
 
-async def test_batch_write_stops_at_the_first_plc_error(make_server: ServerFactory) -> None:
+async def test_batch_write_checks_every_target_before_writing(make_server: ServerFactory) -> None:
     server = make_server(writes=True)
+    assert (await call(server, "write_db", db_number=1, start_offset=160, value="0000"))["success"]
     result = await call(
         server,
         "write_multiple_vars",
         variables=[
             {"db_number": 1, "offset": 160, "value": 1, "data_type": "BYTE"},
             {"db_number": 999, "offset": 0, "value": 2, "data_type": "BYTE"},
-            {"db_number": 1, "offset": 161, "value": 3, "data_type": "BYTE"},
+            {"db_number": 1, "offset": 255, "value": 3, "data_type": "INT"},
         ],
     )
-    assert result["success"] is False
-    assert result["meta"] == {"count": 3, "written": 1}
+    assert result["success"] is False and result["error"].startswith("Nothing was written: 2 of 3")
+    assert result["meta"] == {"count": 3, "written": 0}
+    first, missing, out_of_range = result["data"]["results"]
+    assert first["skipped"] is True
+    assert "Item not available" in missing["error"] and "Address out of range" in out_of_range["error"]
+    assert (await call(server, "read_db", db_number=1, start_offset=160, size=2))["data"]["raw_bytes_hex"] == "0000"
+
+
+async def test_batch_write_stops_at_the_first_plc_error(
+    make_server: ServerFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A PLC error after the checks (e.g. write protection) stops the batch there.
+    server = make_server(writes=True)
+    assert (await call(server, "write_db", db_number=1, start_offset=160, value="000000"))["success"]
+    real_write = server.client.write_area
+    calls = 0
+
+    async def flaky_write(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OperationFailedError("write_area failed: CPU : Function not authorized for current protection level")
+        return await real_write(*args, **kwargs)
+
+    monkeypatch.setattr(server.client, "write_area", flaky_write)
+    result = await call(
+        server,
+        "write_multiple_vars",
+        variables=[{"db_number": 1, "offset": 160 + i, "value": i + 1, "data_type": "BYTE"} for i in range(3)],
+    )
+    assert result["success"] is False and result["error"].startswith("Entry 1 failed; 1 of 3")
     ok_entry, failed, skipped = result["data"]["results"]
-    assert ok_entry["success"] is True
-    assert failed["success"] is False and "Item not available" in failed["error"]
-    assert skipped["skipped"] is True
-    assert (await call(server, "read_db", db_number=1, start_offset=160, size=2))["data"]["raw_bytes_hex"] == "0100"
+    assert ok_entry["success"] is True and "protection level" in failed["error"] and skipped["skipped"] is True
+    assert (await call(server, "read_db", db_number=1, start_offset=160, size=3))["data"]["raw_bytes_hex"] == "010000"
 
 
 # ------------------------------------------------------------- tag map

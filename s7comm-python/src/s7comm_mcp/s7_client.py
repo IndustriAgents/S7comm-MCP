@@ -120,6 +120,13 @@ class OperationFailedError(S7ClientError):
     """Raised when an S7 operation fails (after retries, for link errors)."""
 
 
+class WriteOutcomeUnknownError(OperationFailedError):
+    """A write or CPU command was sent, but the link failed before the reply.
+
+    The PLC may or may not have applied it. It is never resent automatically.
+    """
+
+
 #: Areas the client will write to. Process-image inputs are read-only.
 WRITABLE_AREAS = frozenset({"db", "output", "marker"})
 
@@ -287,6 +294,7 @@ class S7Client:
             self._execute,
             label,
             lambda client: client.write_area(area_enum, db_number, start, bytearray(payload)),
+            lambda client: client.read_area(area_enum, db_number, start, 1),
         )
         return meta
 
@@ -300,6 +308,7 @@ class S7Client:
             self._execute,
             label,
             lambda client: _write_bit(client, area_enum, db_number, byte_offset, bit, bool(value)),
+            lambda client: client.read_area(area_enum, db_number, byte_offset, 1),
         )
         return meta
 
@@ -349,7 +358,11 @@ class S7Client:
             check_error(code, context="client")
 
         try:
-            _, meta = await anyio.to_thread.run_sync(self._execute, f"set_cpu_state({normalized})", _command)
+            _, meta = await anyio.to_thread.run_sync(
+                self._execute, f"set_cpu_state({normalized})", _command, _cpu_status
+            )
+        except WriteOutcomeUnknownError:
+            raise
         except OperationFailedError as exc:
             # Snap7 reports "already RUN/STOP" as an error; the poll below
             # still has to confirm the mode before this counts as success.
@@ -449,15 +462,29 @@ class S7Client:
         with self._lock:
             self._reset_locked()
 
-    def _execute(self, op_name: str, operation: OpCallable) -> OperationResult:
+    def _execute(self, op_name: str, operation: OpCallable, probe: OpCallable | None = None) -> OperationResult:
+        """Run ``operation`` on a connected client, reconnecting after link errors.
+
+        Reads (no ``probe``) are simply repeated after a reconnect. Writes and
+        CPU commands pass a ``probe``: a small read that checks the link right
+        before the request. Connecting and the probe may be retried, but the
+        operation itself is sent at most once. If the link fails after it was
+        sent, :class:`WriteOutcomeUnknownError` reports that it may have been
+        applied, and nothing is resent.
+        """
         start = time.perf_counter()
         attempt = 0
+        send_once = probe is not None
         with self._lock:
             while True:
                 attempt += 1
+                sent = False
                 try:
                     if not self._connected:
                         self._connect_locked()
+                    if probe is not None:
+                        probe(self._client)
+                    sent = send_once
                     result = operation(self._client)
                 except Exception as exc:
                     message = describe_error(exc)
@@ -467,6 +494,12 @@ class S7Client:
                         # the connection is still fine, so report it unchanged.
                         raise OperationFailedError(f"{op_name} failed: {message}") from exc
                     self._reset_locked()
+                    if sent:
+                        self._last_error = f"{op_name}: no reply ({message}); may have been applied"
+                        raise WriteOutcomeUnknownError(
+                            f"{op_name}: no reply from the PLC ({message}). The request was sent once and may "
+                            "have been applied; it was not resent. Read the value back before trying again."
+                        ) from exc
                     if attempt > self.config.max_retries:
                         error_cls = S7ConnectionError if isinstance(exc, S7ConnectionError) else OperationFailedError
                         raise error_cls(f"{op_name} failed after {attempt} attempt(s): {message}") from exc
