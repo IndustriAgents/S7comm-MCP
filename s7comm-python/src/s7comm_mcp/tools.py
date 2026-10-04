@@ -94,9 +94,9 @@ def fail(message: str, meta: dict[str, Any] | None = None, data: Any = None) -> 
 
 @dataclass(slots=True)
 class ToolConfig:
-    """Safety switches and the tag map location."""
+    """Safety switches and the tag map location. Read-only by default."""
 
-    writes_enabled: bool = True
+    writes_enabled: bool = False
     system_cmds_enabled: bool = False
     tag_map_path: Path | None = None
 
@@ -104,7 +104,7 @@ class ToolConfig:
     def from_env(cls) -> ToolConfig:
         tag_path = env_str("TAG_MAP_FILE", "")
         return cls(
-            writes_enabled=env_bool("S7_WRITES_ENABLED", True),
+            writes_enabled=env_bool("S7_WRITES_ENABLED", False),
             system_cmds_enabled=env_bool("S7_SYSTEM_CMDS_ENABLED", False),
             # Relative paths resolve against the server's working directory.
             tag_map_path=Path(tag_path).expanduser().resolve() if tag_path else None,
@@ -632,7 +632,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         bit_index: int | None = None,
         string_length: int | None = None,
     ) -> Envelope:
-        """Write a typed value or raw bytes into a data block. Refused when S7_WRITES_ENABLED=false.
+        """Write a typed value or raw bytes into a data block. Disabled unless S7_WRITES_ENABLED=true.
 
         With data_type (BOOL, BYTE, WORD, DWORD, INT, DINT, REAL, STRING) the value is
         range-checked and encoded big-endian. BOOL needs bit_index and writes only
@@ -692,7 +692,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         bit_index: int | None = None,
         string_length: int | None = None,
     ) -> Envelope:
-        """Write process-image outputs (Q area). Refused when S7_WRITES_ENABLED=false.
+        """Write process-image outputs (Q area). Disabled unless S7_WRITES_ENABLED=true.
 
         Outputs drive physical equipment. Takes the same value/data_type rules as
         write_db; a BOOL write (with bit_index) changes only that output bit.
@@ -734,7 +734,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         bit_index: int | None = None,
         string_length: int | None = None,
     ) -> Envelope:
-        """Write marker memory (M area). Refused when S7_WRITES_ENABLED=false.
+        """Write marker memory (M area). Disabled unless S7_WRITES_ENABLED=true.
 
         Same value/data_type rules as write_db; a BOOL write (with bit_index)
         changes only that marker bit.
@@ -876,7 +876,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
 
     @tool
     async def write_multiple_vars(variables: list[dict[str, Any]]) -> Envelope:
-        """Write several addresses in one call. Refused when S7_WRITES_ENABLED=false.
+        """Write several addresses in one call. Disabled unless S7_WRITES_ENABLED=true.
 
         Entries use the read_multiple_vars address keys plus value, with the
         write_db rules (BOOL needs a bit and writes only that bit; STRING needs
@@ -966,7 +966,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
 
     @tool
     async def write_tag(name: str, value: Any) -> Envelope:
-        """Write a value to a tag from the tag map. Refused when S7_WRITES_ENABLED=false.
+        """Write a value to a tag from the tag map. Disabled unless S7_WRITES_ENABLED=true.
 
         Uses the tag's data_type with the write_db rules (a BOOL tag needs a bit;
         a STRING tag needs string_length).
