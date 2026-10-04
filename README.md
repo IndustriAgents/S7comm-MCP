@@ -81,7 +81,8 @@ npx @modelcontextprotocol/inspector -e S7_HOST=127.0.0.1 -e S7_PORT=1102 \
 - Batch reads and writes across several addresses
 - Tag map system with `list_tags`, `read_tag`, `write_tag`
 - Health tools: `ping` (round trip to the PLC), `get_connection_status`
-- Read-only by default: write tools refuse unless `S7_WRITES_ENABLED=true`; CPU RUN/STOP refuses unless `S7_SYSTEM_CMDS_ENABLED=true`
+- Read-only by default: write tools refuse unless `S7_WRITES_ENABLED=true`; CPU RUN/STOP also needs `S7_SYSTEM_CMDS_ENABLED=true`; inputs are never written
+- Writes reach the PLC at most once: a lost reply is reported (`meta.outcome: "unknown"`, "may have been applied; check before retrying"), never resent
 - Bad arguments, PLC errors and connection problems come back as `success: false` envelopes; the server reconnects after a dropped link
 - Configuration via environment variables, `s7comm-python/.env` or `--env-file` (see [`s7comm-python/README.md`](s7comm-python/README.md#configuration)); the safety switches are never taken from an implicitly found `.env`
 - Mock PLC for confident local testing before touching a real device
@@ -97,13 +98,13 @@ npx @modelcontextprotocol/inspector -e S7_HOST=127.0.0.1 -e S7_PORT=1102 \
 | Tags | `list_tags`, `read_tag`, `write_tag` |
 | Health | `ping`, `get_connection_status` |
 
-The write tools (`write_db`, `write_output`, `write_marker`, `write_multiple_vars`, `write_tag`) are listed but refuse unless `S7_WRITES_ENABLED=true`; `set_cpu_state` refuses unless `S7_SYSTEM_CMDS_ENABLED=true`.
+The write tools (`write_db`, `write_output`, `write_marker`, `write_multiple_vars`, `write_tag`) are listed but refuse unless `S7_WRITES_ENABLED=true`; `set_cpu_state` refuses unless both `S7_WRITES_ENABLED=true` and `S7_SYSTEM_CMDS_ENABLED=true`. Every write reports `meta.outcome` (`written`, `rejected`, `unknown` or `not_sent`) and `meta.request_sent`.
 
 ### Known limitations
 
 - Absolute addressing only. Data blocks with optimized block access (the TIA Portal default on S7-1200/1500) cannot be read or written by offset, and symbolic names are not supported; use a tag map for readable names.
 - Data types: BOOL, BYTE, WORD, DWORD, INT, DINT, REAL and STRING. There is no WSTRING, CHAR, LREAL, DATE/TIME, S5TIME, timer or counter support. STRING text is single-byte (Latin-1).
-- `read_multiple_vars` issues one request per entry, so the values are not one consistent snapshot. `write_multiple_vars` checks every entry before writing any, but it is not atomic on the PLC: it stops at the first PLC error, and earlier entries stay written.
+- `read_multiple_vars` issues one request per entry, so the values are not one consistent snapshot. `write_multiple_vars` checks every entry (on the PLC too) before writing any, but it is not atomic on the PLC: if a write is still refused (e.g. by the protection level) or its reply is lost, it stops there, and earlier entries stay written.
 - `set_cpu_state` uses a hot start for RUN. Whether RUN/STOP, SZL lists and CPU information are available depends on the CPU family, firmware and protection level.
 - Each connection attempt first opens and closes a plain TCP connection to bound the connect time by `S7_TIMEOUT` (Snap7 leaves the TCP connect to the operating system).
 - Tested against the bundled Snap7-based mock (an emulated CPU 315-2 PN/DP), not yet against a range of real CPUs.

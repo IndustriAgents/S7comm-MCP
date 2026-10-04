@@ -9,7 +9,7 @@ The automated suite follows these scenarios: `s7comm-python/tests/test_mcp_stdio
 | 1-4, 6, 7.1, 8, 9, 10.1-10.2 | Read-only defaults |
 | 5, 7.2, 10.3 | `S7_WRITES_ENABLED=true` |
 | 10 | A tag map (`TAG_MAP_FILE`) |
-| 11 | `S7_SYSTEM_CMDS_ENABLED=true` |
+| 11 | `S7_WRITES_ENABLED=true` and `S7_SYSTEM_CMDS_ENABLED=true` |
 
 ## Prerequisites
 
@@ -190,7 +190,7 @@ The I/O tools return whole bytes as hex; read individual bits from the returned 
    ```json
    { "tool": "write_db", "parameters": { "db_number": 1, "start_offset": 8, "value": 25.0, "data_type": "REAL" } }
    ```
-   Expected: Success, `written_bytes: 4`. With writes disabled (the default): `success: false` and the error names `S7_WRITES_ENABLED`.
+   Expected: Success, `written_bytes: 4`, `meta.outcome: "written"`, `meta.request_sent: true`. With writes disabled (the default): `success: false`, the error names `S7_WRITES_ENABLED`, and `meta.outcome` is `"not_sent"`.
 
 2. **Verify Flow Rate** (Read back)
    ```json
@@ -202,7 +202,7 @@ The I/O tools return whole bytes as hex; read individual bits from the returned 
    ```json
    { "tool": "write_output", "parameters": { "start_byte": 0, "value": true, "data_type": "BOOL", "bit_index": 0 } }
    ```
-   Expected: Success, `written_bits: 1`. Only Q0.0 changes; the other seven bits of the byte keep their values. A BOOL write without `bit_index`, or with a value that is not a boolean, is refused.
+   Expected: Success, `written_bits: 1`. Only Q0.0 changes; the other seven bits of the byte keep their values. A BOOL write without `bit_index`, or with a value that is not a JSON boolean, is refused, and so is a `bit_index` on any type other than BOOL.
 
 4. **Verify Pump Command** (Read back)
    ```json
@@ -283,7 +283,7 @@ Batch entries take `area` (`db`, `input`, `output`, `marker`; default `db`), `db
      }
    }
    ```
-   Expected: Success for both writes; Flow Rate becomes 30.0 and Q0.0 is set without touching Q0.1-Q0.7. If any entry is invalid (say a BYTE value of 300), nothing is written. If the PLC rejects an entry, the entries after it are skipped and reported as such.
+   Expected: Success for both writes (each entry has `outcome: "written"`); Flow Rate becomes 30.0 and Q0.0 is set without touching Q0.1-Q0.7. Every entry is checked before anything is written, locally and by reading its target from the PLC: if any entry is invalid (say a BYTE value of 300, DB 999, a mismatched STRING header or an `input` area), nothing is written. If the PLC still refuses a write, or its reply is lost, the entries after it are skipped and reported as such.
 
 ---
 
@@ -368,7 +368,7 @@ Without a tag map, `list_tags` returns an empty list and `read_tag` returns `Unk
 
 ---
 
-## Test Scenario 11: CPU Control (S7_SYSTEM_CMDS_ENABLED=true)
+## Test Scenario 11: CPU Control (S7_WRITES_ENABLED=true and S7_SYSTEM_CMDS_ENABLED=true)
 
 **Objective**: Stop and restart the emulated CPU.
 
@@ -377,7 +377,7 @@ Without a tag map, `list_tags` returns an empty list and `read_tag` returns `Unk
    ```json
    { "tool": "set_cpu_state", "parameters": { "state": "STOP" } }
    ```
-   Expected: `"mode": "STOP"`. The tool succeeds only once the PLC reports the requested mode. Without `S7_SYSTEM_CMDS_ENABLED=true` it refuses.
+   Expected: `"mode": "STOP"`, `meta.outcome: "written"`. The tool succeeds only once the PLC reports the requested mode. Unless both `S7_WRITES_ENABLED=true` and `S7_SYSTEM_CMDS_ENABLED=true` are set, it refuses (`meta.outcome: "not_sent"`).
 
 2. **Start it again**
    ```json

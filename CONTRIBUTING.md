@@ -35,8 +35,10 @@ change that breaks one of these needs a reason in the pull request:
    move physical equipment. They are separated from the read tools, and a
    server should not expose them unless it has been configured to. Here the
    write tools refuse unless `S7_WRITES_ENABLED=true`, and `set_cpu_state`
-   refuses unless `S7_SYSTEM_CMDS_ENABLED=true`; both default to false. New
-   write paths must honour the same switches.
+   also needs `S7_SYSTEM_CMDS_ENABLED=true`; both default to false and are
+   never taken from an implicitly found `.env`. New write paths must honour
+   the same switches, send each request at most once, and report
+   `meta.outcome`.
 3. **The mock can answer it.** If you add a tool, the mock PLC has to be able
    to serve it, or nobody can test it without a plant.
 
@@ -87,7 +89,11 @@ uv run --no-sync pytest
 ```
 
 The full list of steps is in [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
-A change to a tool comes with a test that exercises it against the mock.
+CI also runs the suite with the lowest dependency versions `pyproject.toml`
+allows (`uv pip install --resolution lowest-direct -e ".[dev]"` in a scratch
+venv), so a floor must be a version the tests pass on.
+A change to a tool comes with a test that exercises it against the mock, and
+a safety check comes with a test that fails when the check is removed.
 
 Then drive the server the way a user would — through the
 [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) or a real

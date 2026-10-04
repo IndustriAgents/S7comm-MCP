@@ -19,13 +19,18 @@ the office network.
   `write_marker`, `write_multiple_vars` and `write_tag` refuse unless
   `S7_WRITES_ENABLED=true`. Enable it only for sessions that need to write.
   A value the server does not recognise as true or false stops it at startup.
-- **CPU RUN/STOP is disabled by default.** `set_cpu_state` is refused unless
-  `S7_SYSTEM_CMDS_ENABLED=true`.
+- **CPU RUN/STOP needs both switches.** `set_cpu_state` refuses unless
+  `S7_WRITES_ENABLED=true` and `S7_SYSTEM_CMDS_ENABLED=true`.
+- **Inputs are read-only.** No tool writes the process-image inputs (I/PE).
+- **A write reaches the PLC at most once.** Writes and RUN/STOP are never
+  resent automatically. If the link fails after the request went out, the
+  tool returns `success: false` with `meta.outcome: "unknown"` and says the
+  write may have been applied: check the value before retrying.
 - **There is no per-address allowlist.** With writes enabled, any DB, output or
   marker the PLC lets the connection write is writable by the model. Values are
   not range-checked beyond their data type. A BOOL write changes only its own
-  bit, and an invalid entry in a batch write stops the whole batch before
-  anything is written.
+  bit, a STRING write requires the PLC's STRING header to match, and a batch
+  write checks every entry on the PLC before writing any of them.
 - **Whatever the PLC permits is what the server can do.** On S7-1200/1500,
   PUT/GET access and its protection level are configured in the PLC project;
   use them to limit what this connection can reach.

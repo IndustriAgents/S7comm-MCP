@@ -48,7 +48,7 @@ TAG_MAP_FILE=/absolute/path/to/tags.json
 | `S7_RACK` / `S7_SLOT` | `0` / `2` | CPU rack and slot (see [Connecting to a real PLC](#connecting-to-a-real-plc)) |
 | `S7_CONNECTION_TYPE` | `PG` | Snap7 connection resource: `PG`, `OP` or `S7BASIC` |
 | `S7_TIMEOUT` | `5` | Seconds. Bounds the TCP connect, and is Snap7's ping, send and receive timeout |
-| `S7_MAX_RETRIES` | `3` | Reconnect-and-retry attempts after a link error (TCP/ISO/timeout). Errors the CPU reports for a request, such as `CPU : Item not available`, are returned at once without retrying |
+| `S7_MAX_RETRIES` | `3` | Reconnect-and-retry attempts after a link error (TCP/ISO/timeout). Reads are retried. Writes and RUN/STOP are never resent: only connecting and a short read that checks the link before the request are retried. Errors the CPU reports, such as `CPU : Item not available`, are returned at once |
 | `S7_RETRY_BACKOFF_BASE` | `0.5` | Seconds; doubles on each retry |
 | `S7_DEBUG` | `false` | `true` logs Snap7 and server debug output to stderr |
 | `S7_WRITES_ENABLED` | `false` | `true` lets the write tools change PLC memory and outputs; otherwise they refuse. Not read from an implicit `.env` |
@@ -64,6 +64,21 @@ Invalid values (a port that is not a number, `S7_WRITES_ENABLED=enable`, an unkn
 - `BOOL` uses `bit_index` 0-7 (reads default to bit 0; writes require it). A write changes only that bit, using the S7 BIT transport size, so the other seven bits of the byte are never rewritten. Values must be JSON booleans (`true`/`false`); `1`, `"true"` and the like are refused.
 - `STRING` is the S7 `STRING[N]`: a max-length byte, a current-length byte, then the characters (Latin-1). Reads return only the text; `string_length` (the `N`) is optional and, if given, must match the header in the PLC. Writes require `string_length`, check it against the header, refuse text longer than `N`, and write the header plus the text.
 - Without `data_type`, writes take raw bytes: a hex string (`"0a ff"`) or a list of values 0-255.
+- `bit_index` is accepted only with `BOOL` and `string_length` only with `STRING`; a `size` must match the type. Anything else is refused rather than ignored, so a stray `bit_index` can never turn into a whole-byte write.
+- Process-image inputs (`input`) can be read but never written.
+
+### What a write reports
+
+Every write (`write_db`, `write_output`, `write_marker`, `write_tag`, each `write_multiple_vars` entry) and `set_cpu_state` returns `meta.outcome` and `meta.request_sent`:
+
+| `outcome` | `request_sent` | Meaning |
+|---|---|---|
+| `written` | true | The PLC confirmed it |
+| `rejected` | true | The PLC answered with an error; nothing was applied |
+| `unknown` | true | Sent, but the reply was lost (or RUN/STOP was accepted but the mode was not reached in time). It may have been applied: check before retrying. It is never resent automatically |
+| `not_sent` | false | Stopped before the request went out: writes disabled, invalid arguments, a failed check, or an unreachable PLC |
+
+`write_multiple_vars` first checks every entry locally and then reads every target from the PLC (including STRING headers); if any check fails, nothing is written. The entries are then written in order, and the batch stops at the first `rejected` or `unknown` entry. Its `meta.outcome` is that entry's outcome.
 
 ## Tag map
 
@@ -78,7 +93,7 @@ Invalid values (a port that is not a number, `S7_WRITES_ENABLED=enable`, an unkn
 }
 ```
 
-Tag and batch entries use the same keys: `area` (`db`, `input`, `output` or `marker`; default `db`), `db_number` (data blocks only), the byte offset as `offset`, `start_offset`, `byte` or `start_byte` (required), `bit` or `bit_index`, `data_type`, `string_length`, and `size` for raw reads. An entry without an offset is rejected rather than read at offset 0.
+Tag and batch entries use the same keys: `area` (`db`, `input`, `output` or `marker`; default `db`), `db_number` (data blocks only), the byte offset as `offset`, `start_offset`, `byte` or `start_byte` (required), `bit` or `bit_index` (BOOL only), `data_type`, `string_length` (STRING only), and `size` for raw reads. Numbers must be JSON integers. An entry without an offset is rejected rather than read at offset 0, and `input` entries can be read but not written.
 
 The file is re-read when it changes. If `TAG_MAP_FILE` is set but the file is missing or is not valid JSON, `list_tags`, `read_tag` and `write_tag` return `success: false` with the reason instead of an empty list.
 
