@@ -1,5 +1,6 @@
 # Virtual envs & caches
 .venv/
+.venv-*/
 .env
 .pytest_cache/
 .mypy_cache/

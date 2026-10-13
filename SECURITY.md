@@ -15,14 +15,28 @@ the office network.
 
 ## What the server gates, and what it does not
 
-- **Writes are enabled by default.** `write_db`, `write_output`,
-  `write_marker`, `write_multiple_vars` and `write_tag` are refused only when
-  `S7_WRITES_ENABLED=false`. Set that for any session that only needs to read.
-- **CPU RUN/STOP is disabled by default.** `set_cpu_state` is refused unless
-  `S7_SYSTEM_CMDS_ENABLED=true`.
+- **Writes are disabled by default.** `write_db`, `write_output`,
+  `write_marker`, `write_multiple_vars` and `write_tag` refuse unless
+  `S7_WRITES_ENABLED=true`. Enable it only for sessions that need to write.
+  A value the server does not recognise as true or false stops it at startup.
+- **CPU RUN/STOP needs both switches.** `set_cpu_state` refuses unless
+  `S7_WRITES_ENABLED=true` and `S7_SYSTEM_CMDS_ENABLED=true`.
+- **Inputs are read-only.** No tool writes the process-image inputs (I/PE).
+- **A write reaches the PLC at most once.** Writes and RUN/STOP are never
+  resent automatically. If the link fails after the request went out (or
+  the answer is garbled, or a multi-PDU write fails part-way, or the overall
+  deadline expires), the tool returns `success: false` with
+  `meta.outcome: "unknown"` and says the write may have been applied: check
+  the value before retrying. The write tools are annotated
+  `destructiveHint: true`, `idempotentHint: false`.
+- **Cancelled means not sent.** A write or RUN/STOP that the MCP client
+  cancels, or that is still pending when the client disconnects, is never
+  sent afterwards, even if it was waiting for the PLC or for another request.
 - **There is no per-address allowlist.** With writes enabled, any DB, output or
   marker the PLC lets the connection write is writable by the model. Values are
-  not range-checked beyond their data type.
+  not range-checked beyond their data type. A BOOL write changes only its own
+  bit, a STRING write requires the PLC's STRING header to match, and a batch
+  write checks every entry on the PLC before writing any of them.
 - **Whatever the PLC permits is what the server can do.** On S7-1200/1500,
   PUT/GET access and its protection level are configured in the PLC project;
   use them to limit what this connection can reach.
@@ -34,10 +48,20 @@ the office network.
 - **Keep it read-only until you mean otherwise.** Write tools move physical
   equipment. There is no undo, and a language model will call a tool it has
   been given.
+- **Safety switches come only from you.** `S7_WRITES_ENABLED` and
+  `S7_SYSTEM_CMDS_ENABLED` are honoured only from the process environment
+  (e.g. the MCP client's `env` block) or a file passed with `--env-file`. The
+  implicit `s7comm-python/.env` may set connection settings, but a value in it
+  that would enable a switch is ignored with a warning on stderr (whatever the
+  case of the name, with or without `export`). The implicit file may set only
+  `S7_*` and `TAG_MAP_FILE`; any other key, such as `PATH`, `LD_PRELOAD` or
+  `PYTHONPATH`, is ignored with a warning. The server never reads a `.env`
+  from its working directory, which for a directly launched server is the
+  MCP client's project and may not be trusted.
 - **Do not expose the server beyond the host running the client.** It is a
   stdio process meant to run beside the MCP client, not a network service. The
-  mock PLC, on the other hand, listens on all interfaces; run it on a trusted
-  host.
+  mock PLC, on the other hand, listens on all interfaces by default; start it
+  with `--host 127.0.0.1` unless other machines need to reach it.
 - **Segment the network.** The server should sit where a PLC engineering
   workstation would sit, behind whatever separates your control network from
   everything else.

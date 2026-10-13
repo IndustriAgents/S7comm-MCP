@@ -7,7 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir uv
+# uv is pinned too, so the image build is reproducible end to end.
+RUN pip install --no-cache-dir uv==0.7.7
 
 # Install exactly what uv.lock pins. The python-snap7 2.x wheel bundles the
 # Snap7 native library, so no system packages are needed. Do not replace this
@@ -16,6 +17,13 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock README.md s7_mock_server.py ./
 RUN uv sync --locked --no-dev
 
+# Run unprivileged; port 1102 needs no root.
+RUN useradd --system --uid 10001 --no-create-home mock
+USER mock
+
 EXPOSE 1102
 
-CMD ["uv", "run", "--no-sync", "s7comm-mock-server"]
+# Run the console script directly (not via `uv run`) so the mock is PID 1 and
+# receives docker stop's SIGTERM itself.
+ENV PATH="/app/.venv/bin:$PATH"
+CMD ["s7comm-mock-server"]

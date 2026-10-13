@@ -9,18 +9,23 @@ authors = [
     { name = "IndustriAgents" }
 ]
 dependencies = [
-    "anyio>=4.0.0",
-    "mcp[cli]>=1.6.0",
-    "pydantic>=2.6.0",
+    "anyio>=4.7.0",
+    # FastMCP internals are used (tool manager, fn_metadata, _mcp_server), so
+    # stay below 2. 1.14.0 is the first release the test suite passes on
+    # (earlier ones reject postponed annotations in tool signatures).
+    "mcp[cli]>=1.14.0,<2",
+    "pydantic>=2.11.0",
     "python-dotenv>=1.1.0",
     "python-snap7>=2.0,<3",
 ]
 
+# Floors are the lowest versions the test suite (and ruff's checks) pass on;
+# CI's "lowest direct dependencies" job installs exactly those.
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2.0",
-    "ruff>=0.6.0",
-    "pytest-asyncio>=0.23.0",
+    "ruff>=0.13.0",
+    "pytest-asyncio>=0.24.0",
 ]
 
 [project.scripts]
@@ -29,3 +34,15 @@ s7comm-mcp = "s7comm_mcp.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
