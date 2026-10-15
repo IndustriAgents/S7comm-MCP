@@ -33,8 +33,8 @@ Rebuilding can change archive hashes; these identify the verified files.
 
 | Artifact | SHA-256 |
 |---|---|
-| `industriagents_s7comm_mcp-0.3.0-py3-none-any.whl` | `4c9a6ca0c47ac8ce92d13814d06960e448d54f4ba8f1a52258304fe4b3817116` |
-| `industriagents_s7comm_mcp-0.3.0.tar.gz` | `b825c92869e2a79f6f5ad86ee66ab309f833d5dedb952c2199e2d1d8e89b14a3` |
-| `industriagents-s7comm-mcp-0.3.0.tgz` | `96a74d3902d2ccc33f89134ec46a30af083e8f92a8c04bfb8e9fd74f1ca8379a` |
+| `industriagents_s7comm_mcp-0.3.0-py3-none-any.whl` | `b7fe1665de054501a60e4cb8f58ad8dc87ee80292888aae89d450f5d9272533e` |
+| `industriagents_s7comm_mcp-0.3.0.tar.gz` | `3ef4b626e0aab1899e22fe9d0913bd5fa703dd65d59cbbba3429d4842673e8bf` |
+| `industriagents-s7comm-mcp-0.3.0.tgz` | `fcff9b04ddf60b5df37442ec479631f379137e4cc9e22343c48f0e78ce8d85a2` |
 
 See [release instructions](release.md) for independent registry publication.

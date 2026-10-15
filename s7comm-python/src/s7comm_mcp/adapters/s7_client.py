@@ -526,7 +526,6 @@ class S7Client:
         return await self.write_area("db", start_offset, payload, db_number)
 
     async def read_plc_info(self) -> OperationResult:
-
         def _op(client: Any) -> dict[str, Any]:
             cpu_info = client.get_cpu_info()
             identity = _szl_to_dict(client.read_szl(17, 0), 17, 0)
@@ -544,7 +543,6 @@ class S7Client:
         return await self._run("read_plc_info", _op)
 
     async def read_cpu_state(self) -> OperationResult:
-
         def _op(client: Any) -> dict[str, str]:
             state = _cpu_status(client)
             return {"state": state, "mode": CPU_MODES[state]}
