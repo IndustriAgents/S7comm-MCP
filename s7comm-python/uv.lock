@@ -251,6 +251,40 @@ wheels = [
 ]
 
 [[package]]
+name = "industriagents-s7comm-mcp"
+version = "0.3.0"
+source = { editable = "." }
+dependencies = [
+    { name = "anyio" },
+    { name = "jsonschema" },
+    { name = "mcp", extra = ["cli"] },
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "python-snap7" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anyio", specifier = ">=4.7.0" },
+    { name = "jsonschema", specifier = ">=4.23,<5" },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.22.0,<2" },
+    { name = "pydantic", specifier = ">=2.11.0,<2.13" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.2.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
+    { name = "python-dotenv", specifier = ">=1.1.0" },
+    { name = "python-snap7", specifier = ">=2.0,<3" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.13.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "iniconfig"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -752,38 +786,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a8/b5/d0b7d145963136b564806f6584647af45ab98946660d399ec4da79cae036/ruff-0.14.7-py3-none-win_amd64.whl", hash = "sha256:e17a20ad0d3fad47a326d773a042b924d3ac31c6ca6deb6c72e9e6b5f661a7c6", size = 14531726, upload-time = "2025-11-28T20:54:59.121Z" },
     { url = "https://files.pythonhosted.org/packages/1d/d2/1637f4360ada6a368d3265bf39f2cf737a0aaab15ab520fc005903e883f8/ruff-0.14.7-py3-none-win_arm64.whl", hash = "sha256:be4d653d3bea1b19742fcc6502354e32f65cd61ff2fbdb365803ef2c2aec6228", size = 13609215, upload-time = "2025-11-28T20:55:15.375Z" },
 ]
-
-[[package]]
-name = "s7comm-mcp"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "anyio" },
-    { name = "mcp", extra = ["cli"] },
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "python-snap7" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anyio", specifier = ">=4.7.0" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.14.0,<2" },
-    { name = "pydantic", specifier = ">=2.11.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.2.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
-    { name = "python-dotenv", specifier = ">=1.1.0" },
-    { name = "python-snap7", specifier = ">=2.0,<3" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.13.0" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "shellingham"

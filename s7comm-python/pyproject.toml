@@ -1,6 +1,6 @@
 [project]
-name = "s7comm-mcp"
-version = "0.1.0"
+name = "industriagents-s7comm-mcp"
+version = "0.3.0"
 description = "MCP server and tooling for Siemens S7 PLCs over the S7comm protocol."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -9,12 +9,15 @@ authors = [
     { name = "IndustriAgents" }
 ]
 dependencies = [
+    "jsonschema>=4.23,<5",
     "anyio>=4.7.0",
     # FastMCP internals are used (tool manager, fn_metadata, _mcp_server), so
     # stay below 2. 1.14.0 is the first release the test suite passes on
     # (earlier ones reject postponed annotations in tool signatures).
-    "mcp[cli]>=1.14.0,<2",
-    "pydantic>=2.11.0",
+    # Contract wire errors require CallToolResult passthrough (tested on 1.22+).
+    "mcp[cli]>=1.22.0,<2",
+    # The supported MCP 1.x floor uses typing helpers removed in Pydantic 2.13.
+    "pydantic>=2.11.0,<2.13",
     "python-dotenv>=1.1.0",
     "python-snap7>=2.0,<3",
 ]
@@ -46,3 +49,6 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/s7comm_mcp"]

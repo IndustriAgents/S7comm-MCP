@@ -1,0 +1,1670 @@
+{
+  "schemaVersion": 1,
+  "protocol": "s7comm",
+  "transport": "stdio",
+  "tools": [
+    {
+      "name": "read_values",
+      "description": "Select one source mode and provide only its parameters.\n\ndb: Read raw bytes from a Siemens data block (DB).\n\nReturns the bytes as hex in data.raw_bytes_hex. Absolute offsets need a DB\nwith standard (non-optimized) block access on S7-1200/1500.\n\nArgs:\n    db_number: Data block number, 1-65535.\n    start_offset: First byte to read.\n    size: Number of bytes to read, 1-65535.\n\ndb_typed: Read one typed value from a data block and decode it.\n\ndata_type is BOOL, BYTE, WORD, DWORD, INT, DINT, REAL or STRING (S7 STRING\nwith its 2-byte max/current length header; the text is returned without it).\nValues are big-endian as stored by the PLC.\n\nArgs:\n    db_number: Data block number, 1-65535.\n    start_offset: Byte offset of the value.\n    data_type: One of the types above.\n    size: Optional; if given it must equal the type's size (not used for STRING).\n    bit_index: Bit 0-7, BOOL only (default 0). Rejected for other types.\n    string_length: For STRING, the declared N of STRING[N]. If omitted it is\n        taken from the header in the PLC; if given it must match it.\n\ninput: Read process-image inputs (I / PE area) as raw bytes.\n\nArgs:\n    start_byte: First input byte (IB) to read.\n    size: Number of bytes, 1-65535.\n\noutput: Read process-image outputs (Q / PA area) as raw bytes.\n\nArgs:\n    start_byte: First output byte (QB) to read.\n    size: Number of bytes, 1-65535.\n\nmarker: Read marker (bit memory, M / MK area) bytes.\n\nArgs:\n    start_byte: First marker byte (MB) to read.\n    size: Number of bytes, 1-65535.\n\ntag: Read a tag from the tag map by name, using its area, offset and data_type.\n\nArgs:\n    name: Tag name as listed by list_tags.\n\nbatch: Read several addresses in one call.\n\nEach entry is an object with: area (db, input, output or marker; default\ndb), db_number (for db), offset (alias start_offset, byte, start_byte;\nrequired), data_type (optional, as for read_db_typed; raw bytes without\nit), size (raw byte count, default 1), bit / bit_index (BOOL),\nstring_length (STRING). success is true only if every entry was read;\ndata.results always holds one result per entry.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "db_number": {
+            "title": "Db Number",
+            "type": "integer",
+            "description": "db number for the selected operation; see its mode description."
+          },
+          "start_offset": {
+            "title": "Start Offset",
+            "type": "integer",
+            "description": "start offset for the selected operation; see its mode description."
+          },
+          "size": {
+            "anyOf": [
+              {
+                "title": "Size",
+                "type": "integer"
+              },
+              {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Size"
+              }
+            ],
+            "description": "size for the selected operation; see its mode description."
+          },
+          "source": {
+            "anyOf": [
+              {
+                "const": "db",
+                "type": "string"
+              },
+              {
+                "const": "db_typed",
+                "type": "string"
+              },
+              {
+                "const": "input",
+                "type": "string"
+              },
+              {
+                "const": "output",
+                "type": "string"
+              },
+              {
+                "const": "marker",
+                "type": "string"
+              },
+              {
+                "const": "tag",
+                "type": "string"
+              },
+              {
+                "const": "batch",
+                "type": "string"
+              }
+            ],
+            "description": "Select the source mode described above."
+          },
+          "data_type": {
+            "title": "Data Type",
+            "type": "string",
+            "description": "data type for the selected operation; see its mode description."
+          },
+          "bit_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bit Index",
+            "description": "bit index for the selected operation; see its mode description."
+          },
+          "string_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "String Length",
+            "description": "string length for the selected operation; see its mode description."
+          },
+          "start_byte": {
+            "title": "Start Byte",
+            "type": "integer",
+            "description": "start byte for the selected operation; see its mode description."
+          },
+          "name": {
+            "title": "Name",
+            "type": "string",
+            "description": "name for the selected operation; see its mode description."
+          },
+          "variables": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Variables",
+            "type": "array",
+            "description": "variables for the selected operation; see its mode description."
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "oneOf": [
+          {
+            "properties": {
+              "db_number": {
+                "title": "Db Number",
+                "type": "integer"
+              },
+              "start_offset": {
+                "title": "Start Offset",
+                "type": "integer"
+              },
+              "size": {
+                "title": "Size",
+                "type": "integer"
+              },
+              "source": {
+                "const": "db",
+                "type": "string"
+              }
+            },
+            "required": [
+              "db_number",
+              "start_offset",
+              "size",
+              "source"
+            ],
+            "type": "object",
+            "additionalProperties": false
+          },
+          {
+            "properties": {
+              "db_number": {
+                "title": "Db Number",
+                "type": "integer"
+              },
+              "start_offset": {
+                "title": "Start Offset",
+                "type": "integer"
+              },
+              "data_type": {
+                "title": "Data Type",
+                "type": "string"
+              },
+              "size": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Size"
+              },
+              "bit_index": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bit Index"
+              },
+              "string_length": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "String Length"
+              },
+              "source": {
+                "const": "db_typed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "db_number",
+              "start_offset",
+              "data_type",
+              "source"
+            ],
+            "type": "object",
+            "additionalProperties": false
+          },
+          {
+            "properties": {
+              "start_byte": {
+                "title": "Start Byte",
+                "type": "integer"
+              },
+              "size": {
+                "title": "Size",
+                "type": "integer"
+              },
+              "source": {
+                "const": "input",
+                "type": "string"
+              }
+            },
+            "required": [
+              "start_byte",
+              "size",
+              "source"
+            ],
+            "type": "object",
+            "additionalProperties": false
+          },
+          {
+            "properties": {
+              "start_byte": {
+                "title": "Start Byte",
+                "type": "integer"
+              },
+              "size": {
+                "title": "Size",
+                "type": "integer"
+              },
+              "source": {
+                "const": "output",
+                "type": "string"
+              }
+            },
+            "required": [
+              "start_byte",
+              "size",
+              "source"
+            ],
+            "type": "object",
+            "additionalProperties": false
+          },
+          {
+            "properties": {
+              "start_byte": {
+                "title": "Start Byte",
+                "type": "integer"
+              },
+              "size": {
+                "title": "Size",
+                "type": "integer"
+              },
+              "source": {
+                "const": "marker",
+                "type": "string"
+              }
+            },
+            "required": [
+              "start_byte",
+              "size",
+              "source"
+            ],
+            "type": "object",
+            "additionalProperties": false
+          },
+          {
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "source": {
+                "const": "tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "source"
+            ],
+            "type": "object",
+            "additionalProperties": false
+          },
+          {
+            "properties": {
+              "variables": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Variables",
+                "type": "array"
+              },
+              "source": {
+                "const": "batch",
+                "type": "string"
+              }
+            },
+            "required": [
+              "variables",
+              "source"
+            ],
+            "type": "object",
+            "additionalProperties": false
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "success",
+          "data",
+          "error",
+          "meta"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "data": {},
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "meta": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "write_values",
+      "description": "Select one target mode and provide only its parameters.\n\ndb: Write a typed value or raw bytes into a data block. Disabled unless S7_WRITES_ENABLED=true.\n\nWith data_type (BOOL, BYTE, WORD, DWORD, INT, DINT, REAL, STRING) the value is\nrange-checked and encoded big-endian. BOOL needs bit_index and writes only\nthat bit; the other 7 bits of the byte are left untouched. STRING needs\nstring_length, which must match the STRING header in the PLC. Without\ndata_type, value is raw bytes: a hex string (\"0a ff\") or a list of 0-255.\nbit_index is only accepted with BOOL and string_length only with STRING;\nto change a single bit, use data_type BOOL.\n\nArgs:\n    db_number: Data block number, 1-65535.\n    start_offset: Byte offset to write at.\n    value: The value to write.\n    data_type: Optional type, see above.\n    size: Optional expected byte count (checked against value or data_type).\n    bit_index: Bit 0-7, required for BOOL and rejected otherwise.\n    string_length: N of STRING[N], required for STRING and rejected otherwise.\n\noutput: Write process-image outputs (Q area). Disabled unless S7_WRITES_ENABLED=true.\n\nOutputs drive physical equipment. Takes the same value/data_type rules as\nwrite_db; a BOOL write (with bit_index) changes only that output bit.\n\nArgs:\n    start_byte: Output byte (QB) to write at.\n    value: The value to write.\n    data_type: Optional BOOL, BYTE, WORD, DWORD, INT, DINT, REAL or STRING.\n    size: Optional expected byte count (checked against value or data_type).\n    bit_index: Bit 0-7, required for BOOL and rejected otherwise.\n    string_length: N of STRING[N], required for STRING and rejected otherwise.\n\nmarker: Write marker memory (M area). Disabled unless S7_WRITES_ENABLED=true.\n\nSame value/data_type rules as write_db; a BOOL write (with bit_index)\nchanges only that marker bit.\n\nArgs:\n    start_byte: Marker byte (MB) to write at.\n    value: The value to write.\n    data_type: Optional BOOL, BYTE, WORD, DWORD, INT, DINT, REAL or STRING.\n    size: Optional expected byte count (checked against value or data_type).\n    bit_index: Bit 0-7, required for BOOL and rejected otherwise.\n    string_length: N of STRING[N], required for STRING and rejected otherwise.\n\ntag: Write a value to a tag from the tag map. Disabled unless S7_WRITES_ENABLED=true.\n\nUses the tag's data_type with the write_db rules (a BOOL tag needs a bit;\na STRING tag needs string_length).\n\nArgs:\n    name: Tag name as listed by list_tags.\n    value: The value to write.\n\nbatch: Write several addresses in one call. Disabled unless S7_WRITES_ENABLED=true.\n\nEntries use the read_multiple_vars address keys plus value, with the\nwrite_db rules (BOOL needs a bit and writes only that bit; STRING needs\nstring_length; inputs are read-only). Every entry is checked before\nanything is written: values and addresses locally, then each target\nrange is read from the PLC (STRING headers included). If any check fails,\nnothing is written. Entries are then written in order, each sent once; on\nthe first PLC error or lost reply the rest are skipped. success is true\nonly if every entry was written.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "db_number": {
+            "title": "Db Number",
+            "type": "integer",
+            "description": "db number for the selected operation; see its mode description."
+          },
+          "start_offset": {
+            "title": "Start Offset",
+            "type": "integer",
+            "description": "start offset for the selected operation; see its mode description."
+          },
+          "value": {
+            "title": "Value",
+            "description": "value for the selected operation; see its mode description."
+          },
+          "data_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Data Type",
+            "description": "data type for the selected operation; see its mode description."
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Size",
+            "description": "size for the selected operation; see its mode description."
+          },
+          "bit_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bit Index",
+            "description": "bit index for the selected operation; see its mode description."
+          },
+          "string_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "String Length",
+            "description": "string length for the selected operation; see its mode description."
+          },
+          "target": {
+            "anyOf": [
+              {
+                "const": "db",
+                "type": "string"
+              },
+              {
+                "const": "output",
+                "type": "string"
+              },
+              {
+                "const": "marker",
+                "type": "string"
+              },
+              {
+                "const": "tag",
+                "type": "string"
+              },
+              {
+                "const": "batch",
+                "type": "string"
+              }
+            ],
+            "description": "Select the target mode described above."
+          },
+          "start_byte": {
+            "title": "Start Byte",
+            "type": "integer",
+            "description": "start byte for the selected operation; see its mode description."
+          },
+          "name": {
+            "title": "Name",
+            "type": "string",
+            "description": "name for the selected operation; see its mode description."
+          },
+          "variables": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Variables",
+            "type": "array",
+            "description": "variables for the selected operation; see its mode description."
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "oneOf": [
+          {
+            "properties": {
+              "db_number": {
+                "title": "Db Number",
+                "type": "integer"
+              },
+              "start_offset": {
+                "title": "Start Offset",
+                "type": "integer"
+              },
+              "value": {
+                "title": "Value"
+              },
+              "data_type": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Data Type"
+              },
+              "size": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Size"
+              },
+              "bit_index": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bit Index"
+              },
+              "string_length": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "String Length"
+              },
+              "target": {
+                "const": "db",
+                "type": "string"
+              }
+            },
+            "required": [
+              "db_number",
+              "start_offset",
+              "value",
+              "target"
+            ],
+            "type": "object",
+            "additionalProperties": false
+          },
+          {
+            "properties": {
+              "start_byte": {
+                "title": "Start Byte",
+                "type": "integer"
+              },
+              "value": {
+                "title": "Value"
+              },
+              "data_type": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Data Type"
+              },
+              "size": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Size"
+              },
+              "bit_index": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bit Index"
+              },
+              "string_length": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "String Length"
+              },
+              "target": {
+                "const": "output",
+                "type": "string"
+              }
+            },
+            "required": [
+              "start_byte",
+              "value",
+              "target"
+            ],
+            "type": "object",
+            "additionalProperties": false
+          },
+          {
+            "properties": {
+              "start_byte": {
+                "title": "Start Byte",
+                "type": "integer"
+              },
+              "value": {
+                "title": "Value"
+              },
+              "data_type": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Data Type"
+              },
+              "size": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Size"
+              },
+              "bit_index": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bit Index"
+              },
+              "string_length": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "String Length"
+              },
+              "target": {
+                "const": "marker",
+                "type": "string"
+              }
+            },
+            "required": [
+              "start_byte",
+              "value",
+              "target"
+            ],
+            "type": "object",
+            "additionalProperties": false
+          },
+          {
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              },
+              "target": {
+                "const": "tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "value",
+              "target"
+            ],
+            "type": "object",
+            "additionalProperties": false
+          },
+          {
+            "properties": {
+              "variables": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Variables",
+                "type": "array"
+              },
+              "target": {
+                "const": "batch",
+                "type": "string"
+              }
+            },
+            "required": [
+              "variables",
+              "target"
+            ],
+            "type": "object",
+            "additionalProperties": false
+          }
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "success",
+          "data",
+          "error",
+          "meta"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "data": {},
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "meta": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "read_plc_info",
+      "description": "Read the CPU's identity: module type and name, serial number, order code and firmware version.",
+      "inputSchema": {
+        "properties": {},
+        "title": "read_plc_infoArguments",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "success",
+          "data",
+          "error",
+          "meta"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "data": {},
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "meta": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "read_cpu_state",
+      "description": "Read the CPU operating mode.\n\ndata.state is the Snap7 status (S7CpuStatusRun, S7CpuStatusStop or\nS7CpuStatusUnknown) and data.mode the short form (RUN, STOP or UNKNOWN).",
+      "inputSchema": {
+        "properties": {},
+        "title": "read_cpu_stateArguments",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "success",
+          "data",
+          "error",
+          "meta"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "data": {},
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "meta": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "set_cpu_state",
+      "description": "Switch the CPU to RUN (hot start) or STOP.\n\nDisabled unless both S7_WRITES_ENABLED=true and S7_SYSTEM_CMDS_ENABLED=true.\nSucceeds only when the PLC accepted the command and then reports the\nrequested mode (polled for up to S7_TIMEOUT seconds). The command is sent\nat most once.\n\nArgs:\n    state: \"RUN\" or \"STOP\".",
+      "inputSchema": {
+        "properties": {
+          "state": {
+            "title": "State",
+            "type": "string",
+            "description": "state for the selected operation; see its mode description."
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "set_cpu_stateArguments",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "success",
+          "data",
+          "error",
+          "meta"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "data": {},
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "meta": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "read_system_time",
+      "description": "Read the PLC's real-time clock as an ISO 8601 timestamp (PLC local time, no time zone).",
+      "inputSchema": {
+        "properties": {},
+        "title": "read_system_timeArguments",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "success",
+          "data",
+          "error",
+          "meta"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "data": {},
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "meta": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "read_szl",
+      "description": "Read a system status list (SZL/SSL) partial list.\n\nReturns the record length, record count and each record as hex. Common\nIDs: 0x0011 module identification, 0x001C component identification,\n0x0424 operating mode, 0x0000 list of available SZL IDs.\n\nArgs:\n    szl_id: SZL ID, 0-65535 (e.g. 17 for 0x0011).\n    szl_index: SZL index, 0-65535 (default 0).",
+      "inputSchema": {
+        "properties": {
+          "szl_id": {
+            "title": "Szl Id",
+            "type": "integer",
+            "description": "szl id for the selected operation; see its mode description."
+          },
+          "szl_index": {
+            "default": 0,
+            "title": "Szl Index",
+            "type": "integer",
+            "description": "szl index for the selected operation; see its mode description."
+          }
+        },
+        "required": [
+          "szl_id"
+        ],
+        "title": "read_szlArguments",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "success",
+          "data",
+          "error",
+          "meta"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "data": {},
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "meta": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "list_tags",
+      "description": "List the tags defined in the TAG_MAP_FILE JSON file (empty if TAG_MAP_FILE is not set).",
+      "inputSchema": {
+        "properties": {},
+        "title": "list_tagsArguments",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "success",
+          "data",
+          "error",
+          "meta"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "data": {},
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "meta": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "get_connection_status",
+      "description": "Report the configured PLC address and whether a connection is currently open.\n\nDoes not contact the PLC; the connection opens on the first tool call that\nneeds it (use ping to test reachability). last_error holds the most recent\nfailure, if any.",
+      "inputSchema": {
+        "properties": {},
+        "title": "get_connection_statusArguments",
+        "type": "object",
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "required": [
+          "success",
+          "data",
+          "error",
+          "meta"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "data": {},
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "meta": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      }
+    }
+  ],
+  "routes": {
+    "read_values": {
+      "selector": "source",
+      "options": {
+        "db": "read_db",
+        "db_typed": "read_db_typed",
+        "input": "read_input",
+        "output": "read_output",
+        "marker": "read_marker",
+        "tag": "read_tag",
+        "batch": "read_multiple_vars"
+      }
+    },
+    "write_values": {
+      "selector": "target",
+      "options": {
+        "db": "write_db",
+        "output": "write_output",
+        "marker": "write_marker",
+        "tag": "write_tag",
+        "batch": "write_multiple_vars"
+      }
+    },
+    "read_plc_info": {
+      "handler": "read_plc_info"
+    },
+    "read_cpu_state": {
+      "handler": "read_cpu_state"
+    },
+    "set_cpu_state": {
+      "handler": "set_cpu_state"
+    },
+    "read_system_time": {
+      "handler": "read_system_time"
+    },
+    "read_szl": {
+      "handler": "read_szl"
+    },
+    "list_tags": {
+      "handler": "list_tags"
+    },
+    "get_connection_status": {
+      "handler": "get_connection_status"
+    }
+  },
+  "legacy": {
+    "read_db": "read_values",
+    "read_db_typed": "read_values",
+    "read_input": "read_values",
+    "read_output": "read_values",
+    "read_marker": "read_values",
+    "read_tag": "read_values",
+    "read_multiple_vars": "read_values",
+    "write_db": "write_values",
+    "write_output": "write_values",
+    "write_marker": "write_values",
+    "write_tag": "write_values",
+    "write_multiple_vars": "write_values",
+    "read_plc_info": "read_plc_info",
+    "read_cpu_state": "read_cpu_state",
+    "set_cpu_state": "set_cpu_state",
+    "read_system_time": "read_system_time",
+    "read_szl": "read_szl",
+    "list_tags": "list_tags",
+    "ping": "read_cpu_state",
+    "get_connection_status": "get_connection_status"
+  },
+  "legacySchemas": {
+    "read_db": {
+      "properties": {
+        "db_number": {
+          "title": "Db Number",
+          "type": "integer"
+        },
+        "start_offset": {
+          "title": "Start Offset",
+          "type": "integer"
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "db_number",
+        "start_offset",
+        "size"
+      ],
+      "title": "read_dbArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "read_db_typed": {
+      "properties": {
+        "db_number": {
+          "title": "Db Number",
+          "type": "integer"
+        },
+        "start_offset": {
+          "title": "Start Offset",
+          "type": "integer"
+        },
+        "data_type": {
+          "title": "Data Type",
+          "type": "string"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
+        },
+        "bit_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bit Index"
+        },
+        "string_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "String Length"
+        }
+      },
+      "required": [
+        "db_number",
+        "start_offset",
+        "data_type"
+      ],
+      "title": "read_db_typedArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "write_db": {
+      "properties": {
+        "db_number": {
+          "title": "Db Number",
+          "type": "integer"
+        },
+        "start_offset": {
+          "title": "Start Offset",
+          "type": "integer"
+        },
+        "value": {
+          "title": "Value"
+        },
+        "data_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Type"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
+        },
+        "bit_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bit Index"
+        },
+        "string_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "String Length"
+        }
+      },
+      "required": [
+        "db_number",
+        "start_offset",
+        "value"
+      ],
+      "title": "write_dbArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "read_input": {
+      "properties": {
+        "start_byte": {
+          "title": "Start Byte",
+          "type": "integer"
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_byte",
+        "size"
+      ],
+      "title": "read_inputArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "read_output": {
+      "properties": {
+        "start_byte": {
+          "title": "Start Byte",
+          "type": "integer"
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_byte",
+        "size"
+      ],
+      "title": "read_outputArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "write_output": {
+      "properties": {
+        "start_byte": {
+          "title": "Start Byte",
+          "type": "integer"
+        },
+        "value": {
+          "title": "Value"
+        },
+        "data_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Type"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
+        },
+        "bit_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bit Index"
+        },
+        "string_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "String Length"
+        }
+      },
+      "required": [
+        "start_byte",
+        "value"
+      ],
+      "title": "write_outputArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "read_marker": {
+      "properties": {
+        "start_byte": {
+          "title": "Start Byte",
+          "type": "integer"
+        },
+        "size": {
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_byte",
+        "size"
+      ],
+      "title": "read_markerArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "write_marker": {
+      "properties": {
+        "start_byte": {
+          "title": "Start Byte",
+          "type": "integer"
+        },
+        "value": {
+          "title": "Value"
+        },
+        "data_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Type"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size"
+        },
+        "bit_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bit Index"
+        },
+        "string_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "String Length"
+        }
+      },
+      "required": [
+        "start_byte",
+        "value"
+      ],
+      "title": "write_markerArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "read_plc_info": {
+      "properties": {},
+      "title": "read_plc_infoArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "read_cpu_state": {
+      "properties": {},
+      "title": "read_cpu_stateArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "set_cpu_state": {
+      "properties": {
+        "state": {
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "title": "set_cpu_stateArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "read_system_time": {
+      "properties": {},
+      "title": "read_system_timeArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "read_szl": {
+      "properties": {
+        "szl_id": {
+          "title": "Szl Id",
+          "type": "integer"
+        },
+        "szl_index": {
+          "default": 0,
+          "title": "Szl Index",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "szl_id"
+      ],
+      "title": "read_szlArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "read_multiple_vars": {
+      "properties": {
+        "variables": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Variables",
+          "type": "array"
+        }
+      },
+      "required": [
+        "variables"
+      ],
+      "title": "read_multiple_varsArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "write_multiple_vars": {
+      "properties": {
+        "variables": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Variables",
+          "type": "array"
+        }
+      },
+      "required": [
+        "variables"
+      ],
+      "title": "write_multiple_varsArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "list_tags": {
+      "properties": {},
+      "title": "list_tagsArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "read_tag": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "read_tagArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "write_tag": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "write_tagArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "ping": {
+      "properties": {},
+      "title": "pingArguments",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "get_connection_status": {
+      "properties": {},
+      "title": "get_connection_statusArguments",
+      "type": "object",
+      "additionalProperties": false
+    }
+  },
+  "resultSchema": {
+    "type": "object",
+    "required": [
+      "success",
+      "data",
+      "error",
+      "meta"
+    ],
+    "properties": {
+      "success": {
+        "type": "boolean"
+      },
+      "data": {},
+      "error": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "meta": {
+        "type": "object"
+      }
+    },
+    "additionalProperties": false
+  },
+  "localStatusTools": [
+    "get_connection_status"
+  ]
+}

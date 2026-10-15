@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from importlib.metadata import PackageNotFoundError, version
 
-PROJECT_NAME = "s7comm-mcp"
+PROJECT_NAME = "industriagents-s7comm-mcp"
 
 _TRUE = {"1", "true", "yes", "y", "on"}
 _FALSE = {"0", "false", "no", "n", "off", ""}

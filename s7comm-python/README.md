@@ -1,3 +1,10 @@
+> **0.3.0 package and tool migration:** Install `industriagents-s7comm-mcp`
+> from npm (requires uv) or PyPI; the command remains `s7comm-mcp`.
+> The advertised catalog now contains **9 tools**. Older tool names in
+> the examples below remain compatibility calls. See the
+> [architecture and canonical tool guide](../docs/architecture.md)
+> and [release guide](../docs/release.md).
+
 # s7comm-python
 
 Python implementation of the Siemens S7 MCP server built with `uv`, `mcp[cli]`, and `python-snap7`. The CLI entry point is `s7comm-mcp`. See the [repository README](../README.md) for an overview, the tool list and known limitations.

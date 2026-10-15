@@ -51,7 +51,7 @@ class Session:
 
     async def call(self, tool: str, **arguments: Any) -> dict[str, Any]:
         result = await self.session.call_tool(tool, arguments)
-        assert not result.isError, result
+        assert result.isError is (json.loads(result.content[0].text).get("success") is False), result
         envelope = result.structuredContent
         assert envelope is not None
         assert set(envelope) == {"success", "data", "error", "meta"}
@@ -75,7 +75,7 @@ async def test_server_info_reports_the_package_version(mock_plc: MockPLC) -> Non
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         init = await session.initialize()
     assert init.serverInfo.name == "S7comm MCP Server"
-    assert init.serverInfo.version == importlib.metadata.version("s7comm-mcp")
+    assert init.serverInfo.version == importlib.metadata.version("industriagents-s7comm-mcp")
     assert init.serverInfo.version != importlib.metadata.version("mcp")
 
 
@@ -83,16 +83,16 @@ async def test_tools_list_has_a_description_for_every_tool(mock_plc: MockPLC) ->
     async with mcp_session(server_env(mock_plc.port)) as client:
         listed = await client.session.list_tools()
     names = {tool.name for tool in listed.tools}
-    assert len(names) == 20
+    assert len(names) == 9
     for tool in listed.tools:
         assert tool.description and len(tool.description) > 20, tool.name
         assert tool.description == inspect.cleandoc(tool.description)  # dedented docstring
-    for name in ("write_db", "write_output", "write_marker", "write_multiple_vars", "write_tag"):
+    for name in ("write_values",):
         description = next(tool.description for tool in listed.tools if tool.name == name)
         assert "S7_WRITES_ENABLED" in description
 
 
-WRITE_TOOLS = {"write_db", "write_output", "write_marker", "write_multiple_vars", "write_tag", "set_cpu_state"}
+WRITE_TOOLS = {"write_values", "set_cpu_state"}
 
 
 async def test_tool_annotations_never_invite_retries_of_writes(mock_plc: MockPLC) -> None:
@@ -259,7 +259,7 @@ async def test_server_starts_and_lists_tools_without_a_plc(tmp_path: Path) -> No
     try:
         async with mcp_session(server_env(port, S7_MAX_RETRIES="0"), errlog=errlog) as c:
             listed = await c.session.list_tools()
-            assert len(listed.tools) == 20
+            assert len(listed.tools) == 9
             started = time.monotonic()
             result = await c.call("read_db", db_number=1, start_offset=0, size=1)
             assert result["success"] is False and "Cannot reach" in result["error"]
@@ -387,7 +387,17 @@ def test_stdout_carries_only_json_rpc(mock_plc: MockPLC, tmp_path: Path) -> None
         assert json.loads(line).get("jsonrpc") == "2.0", line
 
     listed = {tool["name"] for tool in responses[2]["result"]["tools"]}
-    assert listed == set(EVERY_TOOL_CALL), "every tool must be exercised here"
+    assert listed == {
+        "read_cpu_state",
+        "read_values",
+        "set_cpu_state",
+        "get_connection_status",
+        "read_plc_info",
+        "write_values",
+        "list_tags",
+        "read_szl",
+        "read_system_time",
+    }, "every tool must be exercised here"
     for offset, (name, _arguments) in enumerate(calls[: len(EVERY_TOOL_CALL)]):
         envelope = responses[10 + offset]["result"]["structuredContent"]
         assert envelope["success"] is True, (name, envelope)

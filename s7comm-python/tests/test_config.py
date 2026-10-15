@@ -94,11 +94,11 @@ def test_server_starts_without_a_plc(clean_env: pytest.MonkeyPatch) -> None:
     clean_env.setenv("S7_PORT", "1")  # nothing listens there
     server = S7CommMCPServer()
     tools = asyncio.run(server._mcp.list_tools())
-    assert len(tools) == 20
+    assert len(tools) == 9
     assert server.client.connection_status()["connected"] is False
 
 
-def make_project(root: Path, name: str = "s7comm-mcp") -> Path:
+def make_project(root: Path, name: str = "industriagents-s7comm-mcp") -> Path:
     project = root / "s7comm-python"
     (project / "src" / "s7comm_mcp").mkdir(parents=True)
     (project / "pyproject.toml").write_text(f'[project]\nname = "{name}"\n')
