@@ -107,6 +107,8 @@ class S7ClientConfig:
 class S7ConnectionError(S7ClientError):
     """Raised when the PLC cannot be reached or the connection broke."""
 
+    outcome = "not_sent"
+
 
 class OperationFailedError(S7ClientError):
     """Raised when an S7 operation fails (after retries, for link errors).
@@ -753,9 +755,9 @@ class S7Client:
                 message = describe_error(exc)
                 self._last_error = f"{op_name}: {message}"
                 if not is_link_error(exc):
-                    if not sent or not is_snap7_error(exc):
+                    if not sent:
                         raise OperationFailedError(f"{op_name} failed: {message}") from exc
-                    if single_pdu and is_refusal(message):
+                    if single_pdu and is_snap7_error(exc) and is_refusal(message):
                         raise OperationFailedError(f"{op_name} failed: {message}", outcome="rejected") from exc
                     self._last_error = f"{op_name}: {message}; may have been applied"
                     raise WriteOutcomeUnknownError(

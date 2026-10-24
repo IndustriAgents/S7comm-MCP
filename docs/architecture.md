@@ -126,6 +126,12 @@ unknown, not success. Failure to persist a result is logged and marked
 Audit records omit payloads and credentials. Manage file retention externally;
 this append-only log is not a tamper-proof external audit service.
 
+Policy documents are read only from regular files, with a 64 KiB read bound and
+at most 16 JSON nesting levels. Duplicate fields are rejected. The size bound
+still applies if a file grows during the read. Audit destinations must also be
+regular files; devices and pipes are refused before any audit record is written.
+A FIFO cannot block policy loading or audit admission while waiting for a peer.
+
 ## Protocol capability limits
 
 Live S7 communication uses python-snap7. Absolute DB access requires suitable PLC access settings and non-optimized blocks where applicable. CPU state changes require both write and system-command gates. Multi-variable writes may partially apply and are not transactions.
@@ -154,3 +160,44 @@ consolidated routes, unknown/mixed arguments, legacy-policy bypass, independent
 admission state, durable intent failure and MCP error envelopes. npm tests
 check the bundled version, argument boundaries, exit status and missing-uv
 errors. See [release.md](release.md) for the registry workflow.
+
+## Request and failure bounds
+
+Every call is bounded before selector forwarding, JSON encoding, schema
+validation, policy admission or device I/O. Contract limits are 32 nesting
+levels, 10,000 entries per container and 50,000 total values; the deployment
+policy additionally bounds serialized request bytes. Non-finite numbers,
+non-JSON values, invalid Unicode and non-string object keys are rejected.
+These checks bound work after the MCP SDK has decoded the transport frame.
+
+Consolidated selector modes validate their complete contract schemas. Legacy
+names and direct routes retain their established native validation and coercion,
+including their error details; unknown top-level keys are always refused.
+MCP input-model validation runs before the handler. A validation exception
+raised inside a handler is an execution failure and cannot prove a control was
+not sent. Unexpected execution failures preserve an uncertain outcome; native
+send tracking remains authoritative when available. Neither case adds retries.
+
+An audit-result failure adds `meta.audit_error` to the same envelope used for
+both text content and structured content, including text-only native results.
+Cancellation releases admission capacity and retains an unknown audit outcome
+when no result was observed.
+
+### S7 control outcomes
+
+Native failures after dispatch are unknown unless a recognized Snap7 single-PDU
+refusal establishes rejection. An unexpected Python exception after sending
+cannot be treated as a pre-send failure. Application preparation errors remain
+`not_sent`; unclassified failures from a control port are `unknown` with
+`request_sent: null`. Batch results retain this uncertainty and stop after the
+first failure. If earlier entries succeeded, the aggregate outcome is unknown
+even when the failing entry was not sent; each entry retains its own outcome. CPU command spelling remains case-insensitive for compatibility.
+
+## Complete batch prechecks
+
+Before the first batch write, every target read must return the entire
+requested range. A truncated raw, BOOL or STRING preflight read refuses the
+whole batch with `not_sent`, even if a valid STRING header was present. Empty
+or non-list legacy batches also report `request_sent:false` explicitly. These
+checks establish that no batch write began; they do not make multi-variable
+writes transactional or replace the existing partial-application reporting.

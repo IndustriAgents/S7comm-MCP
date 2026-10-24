@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from s7comm_mcp.domain.errors import OperationMeta
+from s7comm_mcp.domain.errors import OperationMeta, WritePreparationError
 from s7comm_mcp.domain.model import (
     TYPE_SIZES,
     Address,
@@ -49,12 +49,14 @@ async def precheck_write(client: S7ClientPort, prepared: PreparedWrite) -> None:
     """
     addr = prepared.address
     if prepared.kind == "string":
-        declared = addr.string_length or 0
-        payload, _ = await client.read_area(addr.area, addr.offset, 2 + declared, addr.db_number)
-        check_string_header(payload[:2], declared)
-        return
-    size = 1 if prepared.kind == "bit" else len(prepared.payload)
-    await client.read_area(addr.area, addr.offset, size, addr.db_number)
+        size = 2 + (addr.string_length or 0)
+    else:
+        size = 1 if prepared.kind == "bit" else len(prepared.payload)
+    payload, _ = await client.read_area(addr.area, addr.offset, size, addr.db_number)
+    if len(payload) != size:
+        raise ValueError(f"PLC returned {len(payload)} bytes during write precheck, expected {size}")
+    if prepared.kind == "string":
+        check_string_header(payload[:2], addr.string_length or 0)
 
 
 async def execute_write(client: S7ClientPort, prepared: PreparedWrite) -> tuple[dict[str, Any], OperationMeta]:
@@ -64,9 +66,12 @@ async def execute_write(client: S7ClientPort, prepared: PreparedWrite) -> tuple[
         return ({**addr.describe(), "value": prepared.flag, "written_bits": 1}, meta)
     if prepared.kind == "string":
         declared = addr.string_length or 0
-        header, _ = await client.read_area(addr.area, addr.offset, 2, addr.db_number)
-        check_string_header(header, declared)
-        payload = bytes([declared, len(prepared.payload)]) + prepared.payload
+        try:
+            header, _ = await client.read_area(addr.area, addr.offset, 2, addr.db_number)
+            check_string_header(header, declared)
+            payload = bytes([declared, len(prepared.payload)]) + prepared.payload
+        except Exception as exc:
+            raise WritePreparationError(str(exc)) from exc
         meta = await client.write_area(addr.area, addr.offset, payload, addr.db_number)
         data = {**addr.describe(), "value": prepared.payload.decode("latin-1"), "max_length": declared}
         return ({**data, "length": len(prepared.payload), "written_bytes": len(payload)}, meta)

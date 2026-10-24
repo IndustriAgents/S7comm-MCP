@@ -62,6 +62,9 @@ class CommonOperations:
         meta = {k: v for k, v in addr_args.items() if v is not None}
         try:
             prepared = prepare_write(make_address(**addr_args, **kwargs), value)
+        except Exception as exc:
+            return fail(_error_text(exc), {**meta, **NOT_SENT})
+        try:
             data, op_meta = await execute_write(self.client, prepared)
         except Exception as exc:
             return fail(_error_text(exc), {**meta, **write_outcome(exc)})

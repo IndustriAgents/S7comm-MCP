@@ -355,6 +355,16 @@ async def test_link_error_after_a_write_was_sent_is_not_retried(fake_snap7: type
     assert len(writes) == 1
 
 
+@pytest.mark.parametrize("error", [RuntimeError("unexpected device result"), ValueError("bad result shape")])
+async def test_unexpected_error_after_native_send_is_unknown(fake_snap7: type[FakeClient], error) -> None:
+    client = make_client(max_retries=3)
+    fake_snap7.script = [None, error]
+    with pytest.raises(OperationFailedError) as caught:
+        await client.write_db(1, 0, b"\x01")
+    assert (caught.value.outcome, caught.value.request_sent) == ("unknown", True)
+    assert sum(fake.writes for fake in fake_snap7.instances) == 1
+
+
 async def test_link_error_in_the_probe_reconnects_before_writing(fake_snap7: type[FakeClient]) -> None:
     client = make_client(max_retries=3)
     await client.ensure_connection()
@@ -413,12 +423,14 @@ async def test_failed_mode_poll_after_an_accepted_command_is_unknown(
 # ------------------------------------------------------------- rule 1a: local failures before the send
 
 
-async def test_failure_while_building_the_request_is_not_sent(fake_snap7: type[FakeClient]) -> None:
-    # python-snap7 raises a plain Python error while preparing the call, before Snap7 sends anything.
+async def test_python_error_inside_native_write_cannot_prove_not_sent(fake_snap7: type[FakeClient]) -> None:
+    # An exception type does not tell us whether the library failed during
+    # preparation or after sending. The native call has started, so be conservative.
     fake_snap7.script = [None, TypeError("unsupported operand type(s)")]
     with pytest.raises(OperationFailedError) as excinfo:
         await make_client().write_db(1, 0, b"\x01")
-    assert (excinfo.value.outcome, excinfo.value.request_sent) == ("not_sent", False)
+    assert (excinfo.value.outcome, excinfo.value.request_sent) == ("unknown", True)
+    assert sum(fake.writes for fake in fake_snap7.instances) == 1
 
 
 # ------------------------------------------------------------- rule 12: overall deadline

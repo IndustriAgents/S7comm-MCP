@@ -10,12 +10,12 @@ from typing import Any
 
 import anyio
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.stdio import stdio_server
 from mcp.types import ContentBlock
 from pydantic import ValidationError
 
 from .config import package_version
+from .domain.model import WRITE_TOOLS
 from .s7_client import S7Client
 from .tools import TagMap, ToolConfig, ToolResources, fail, register_tools
 
@@ -90,19 +90,17 @@ class EnvelopeFastMCP(FastMCP):
             await sink.aclose()  # ... then let the SDK see the end of input
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Sequence[ContentBlock] | dict[str, Any]:
-        try:
-            return await super().call_tool(name, arguments)
-        except ToolError as exc:
-            tool = self._tool_manager.get_tool(name)
-            if tool is None:
-                raise
-            cause = exc.__cause__
-            if isinstance(cause, ValidationError):
-                message = _format_validation_error(cause)
-            else:
-                logger.error("tool %s raised", name, exc_info=cause or exc)
-                message = f"Internal error in {name}: {cause or exc}"
-            return tool.fn_metadata.convert_result(fail(message, {"tool": name}))
+        tool = self._tool_manager.get_tool(name)
+        if tool is not None:
+            try:
+                tool.fn_metadata.arg_model.model_validate(tool.fn_metadata.pre_parse_json(arguments))
+            except ValidationError as exc:
+                meta = {"tool": name}
+                if name in WRITE_TOOLS:
+                    meta.update(outcome="not_sent", request_sent=False)
+                return tool.fn_metadata.convert_result(fail(_format_validation_error(exc), meta))
+        # Any failure from a handler, even ValidationError, may follow dispatch.
+        return await super().call_tool(name, arguments)
 
 
 class S7CommMCPServer:

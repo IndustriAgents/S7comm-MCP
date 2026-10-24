@@ -86,6 +86,8 @@ class WriteOperations:
         refused = self._system_cmds_refused()
         if refused:
             return refused
+        if state.strip().upper() not in {"RUN", "STOP"}:
+            return fail("state must be RUN or STOP", {"requested_state": state, **NOT_SENT})
         try:
             observed, meta = await self.client.set_cpu_state(state)
         except Exception as exc:
@@ -99,7 +101,7 @@ class WriteOperations:
             return refused
         problem = self._batch_size_error(variables)
         if problem:
-            return fail(problem)
+            return fail(problem, {"written": 0, **NOT_SENT})
         prepared: list[PreparedWrite | None] = []
         results: list[dict[str, Any]] = []
         for index, spec in enumerate(variables):
@@ -149,7 +151,12 @@ class WriteOperations:
                 if failed_item["outcome"] == "unknown"
                 else "failed"
             )
-            stop = {"outcome": failed_item["outcome"], "request_sent": failed_item["request_sent"] or written > 0}
+            stop = {
+                # Once a prior entry succeeded the batch has partially applied,
+                # even if the failing entry was not sent or was rejected.
+                "outcome": "unknown" if written else failed_item["outcome"],
+                "request_sent": True if written > 0 else failed_item["request_sent"],
+            }
             return fail(
                 (
                     "Entry "
@@ -178,6 +185,9 @@ class WriteOperations:
             if spec is None:
                 return fail(f"Unknown tag '{name}'", {"tag": name, **NOT_SENT})
             prepared = prepare_write(address_from_spec(spec), value)
+        except Exception as exc:
+            return fail(_error_text(exc), {"tag": name, **NOT_SENT})
+        try:
             entry, meta = await execute_write(self.client, prepared)
         except Exception as exc:
             return fail(_error_text(exc), {"tag": name, **write_outcome(exc)})

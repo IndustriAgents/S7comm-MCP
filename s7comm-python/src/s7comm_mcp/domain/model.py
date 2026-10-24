@@ -361,8 +361,11 @@ def write_outcome(exc: BaseException | None = None) -> dict[str, Any]:
     stopped before the request went out (disabled, invalid, failed pre-check,
     or the PLC was unreachable).
     """
-    outcome = "written" if exc is None else getattr(exc, "outcome", "not_sent")
-    return {"outcome": outcome, "request_sent": outcome != "not_sent"}
+    outcome = "written" if exc is None else getattr(exc, "outcome", "unknown")
+    sent = outcome != "not_sent"
+    if exc is not None and not hasattr(exc, "outcome"):
+        sent = None  # An unclassified exception cannot establish whether a send occurred.
+    return {"outcome": outcome, "request_sent": sent}
 
 
 NOT_SENT = {"outcome": "not_sent", "request_sent": False}

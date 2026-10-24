@@ -10,6 +10,12 @@ class S7ClientError(RuntimeError):
     """Raised when an S7 operation fails."""
 
 
+class WritePreparationError(ValueError):
+    """A read or local check failed before a native write was invoked."""
+
+    outcome = "not_sent"
+
+
 def describe_error(exc: BaseException) -> str:
     """Render a python-snap7 error (whose message is ``bytes``) as plain text."""
     if exc.args and isinstance(exc.args[0], (bytes, bytearray)):
