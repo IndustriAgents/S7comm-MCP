@@ -260,3 +260,56 @@ def test_batch_entry_with_a_bit_but_no_bool_type_is_rejected() -> None:
     # Reviewer's case: {"area": "output", "byte": 2, "bit": 6, "value": "40"} rewrote QB2 to 0x40.
     with pytest.raises(ValueError, match="bit_index only applies to data_type BOOL"):
         address_from_spec({"area": "output", "byte": 2, "bit": 6, "value": "40"})
+
+
+@pytest.mark.parametrize(
+    "dtype,value,expected",
+    [
+        ("LINT", -(2**63), "8000000000000000"),
+        ("LINT", 2**63 - 1, "7fffffffffffffff"),
+        ("ULINT", 2**64 - 1, "ffffffffffffffff"),
+        ("LINT", -1, "ffffffffffffffff"),
+        ("ULINT", 2**53 + 1, "0020000000000001"),
+        ("LREAL", 1.0, "3ff0000000000000"),
+        ("LREAL", -0.0, "8000000000000000"),
+    ],
+)
+def test_64_bit_big_endian_golden_values(dtype, value, expected):
+    raw = bytes.fromhex(expected)
+    assert encode_scalar(value, dtype) == raw
+    assert decode_scalar(raw, dtype) == value
+    if dtype != "LREAL":
+        assert encode_scalar(str(value), dtype) == raw
+
+
+@pytest.mark.parametrize(
+    "dtype,value",
+    [
+        ("LINT", str(2**63)),
+        ("LINT", str(-(2**63) - 1)),
+        ("ULINT", "-1"),
+        ("ULINT", str(2**64)),
+        ("LINT", "1e3"),
+        ("LINT", " 1"),
+        ("LINT", "+1"),
+        ("LINT", "01"),
+        ("LINT", "-0"),
+        ("ULINT", "١"),
+        ("ULINT", 1.0),
+        ("LINT", True),
+        ("LREAL", "1.0"),
+        ("LREAL", float("inf")),
+        ("LREAL", float("nan")),
+        ("LREAL", 10**400),
+    ],
+)
+def test_64_bit_invalid_values_fail_before_encoding(dtype, value):
+    with pytest.raises(ValueError):
+        encode_scalar(value, dtype)
+
+
+def test_lreal_keeps_double_precision_and_reports_nonfinite_reads_as_text():
+    value = 1.2345678901234567
+    assert decode_scalar(encode_scalar(value, "LREAL"), "LREAL") == value
+    assert decode_scalar(bytes.fromhex("7ff0000000000000"), "LREAL") == "inf"
+    assert decode_scalar(bytes.fromhex("7ff8000000000000"), "LREAL") == "nan"

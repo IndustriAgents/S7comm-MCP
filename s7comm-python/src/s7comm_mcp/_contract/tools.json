@@ -5,7 +5,7 @@
   "tools": [
     {
       "name": "read_values",
-      "description": "Select one source mode and provide only its parameters.\n\ndb: Read raw bytes from a Siemens data block (DB).\n\nReturns the bytes as hex in data.raw_bytes_hex. Absolute offsets need a DB\nwith standard (non-optimized) block access on S7-1200/1500.\n\nArgs:\n    db_number: Data block number, 1-65535.\n    start_offset: First byte to read.\n    size: Number of bytes to read, 1-65535.\n\ndb_typed: Read one typed value from a data block and decode it.\n\ndata_type is BOOL, BYTE, WORD, DWORD, INT, DINT, REAL or STRING (S7 STRING\nwith its 2-byte max/current length header; the text is returned without it).\nValues are big-endian as stored by the PLC.\n\nArgs:\n    db_number: Data block number, 1-65535.\n    start_offset: Byte offset of the value.\n    data_type: One of the types above.\n    size: Optional; if given it must equal the type's size (not used for STRING).\n    bit_index: Bit 0-7, BOOL only (default 0). Rejected for other types.\n    string_length: For STRING, the declared N of STRING[N]. If omitted it is\n        taken from the header in the PLC; if given it must match it.\n\ninput: Read process-image inputs (I / PE area) as raw bytes.\n\nArgs:\n    start_byte: First input byte (IB) to read.\n    size: Number of bytes, 1-65535.\n\noutput: Read process-image outputs (Q / PA area) as raw bytes.\n\nArgs:\n    start_byte: First output byte (QB) to read.\n    size: Number of bytes, 1-65535.\n\nmarker: Read marker (bit memory, M / MK area) bytes.\n\nArgs:\n    start_byte: First marker byte (MB) to read.\n    size: Number of bytes, 1-65535.\n\ntag: Read a tag from the tag map by name, using its area, offset and data_type.\n\nArgs:\n    name: Tag name as listed by list_tags.\n\nbatch: Read several addresses in one call.\n\nEach entry is an object with: area (db, input, output or marker; default\ndb), db_number (for db), offset (alias start_offset, byte, start_byte;\nrequired), data_type (optional, as for read_db_typed; raw bytes without\nit), size (raw byte count, default 1), bit / bit_index (BOOL),\nstring_length (STRING). success is true only if every entry was read;\ndata.results always holds one result per entry.",
+      "description": "Select one source mode and provide only its parameters.\n\ndb: Read raw bytes from a Siemens data block (DB).\n\nReturns the bytes as hex in data.raw_bytes_hex. Absolute offsets need a DB\nwith standard (non-optimized) block access on S7-1200/1500.\n\nArgs:\n    db_number: Data block number, 1-65535.\n    start_offset: First byte to read.\n    size: Number of bytes to read, 1-65535.\n\ndb_typed: Read one typed value from a data block and decode it.\n\ndata_type is BOOL, BYTE, WORD, DWORD, INT, DINT, REAL, LINT, ULINT, LREAL or STRING (S7 STRING\nwith its 2-byte max/current length header; the text is returned without it).\nValues are big-endian as stored by the PLC.\n\nArgs:\n    db_number: Data block number, 1-65535.\n    start_offset: Byte offset of the value.\n    data_type: One of the types above.\n    size: Optional; if given it must equal the type's size (not used for STRING).\n    bit_index: Bit 0-7, BOOL only (default 0). Rejected for other types.\n    string_length: For STRING, the declared N of STRING[N]. If omitted it is\n        taken from the header in the PLC; if given it must match it.\n\ninput: Read process-image inputs (I / PE area) as raw bytes.\n\nArgs:\n    start_byte: First input byte (IB) to read.\n    size: Number of bytes, 1-65535.\n\noutput: Read process-image outputs (Q / PA area) as raw bytes.\n\nArgs:\n    start_byte: First output byte (QB) to read.\n    size: Number of bytes, 1-65535.\n\nmarker: Read marker (bit memory, M / MK area) bytes.\n\nArgs:\n    start_byte: First marker byte (MB) to read.\n    size: Number of bytes, 1-65535.\n\ntag: Read a tag from the tag map by name, using its area, offset and data_type.\n\nArgs:\n    name: Tag name as listed by list_tags.\n\nbatch: Read several addresses in one call.\n\nEach entry is an object with: area (db, input, output or marker; default\ndb), db_number (for db), offset (alias start_offset, byte, start_byte;\nrequired), data_type (optional, as for read_db_typed; raw bytes without\nit), size (raw byte count, default 1), bit / bit_index (BOOL),\nstring_length (STRING). success is true only if every entry was read;\ndata.results always holds one result per entry.\n\nLINT/ULINT are 8-byte integers; writes accept integers or canonical decimal strings. Unsafe JSON integers are returned as decimal strings with meta.encoded_integer_paths. LREAL is 8-byte IEEE-754. Use a commissioned standard DB layout; this does not discover CPU type support or enable optimized DB access.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -642,6 +642,16 @@
               },
               "simulated": {
                 "type": "boolean"
+              },
+              "value_encoding": {
+                "const": "decimal_string"
+              },
+              "encoded_integer_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "JSON pointers to exact decimal strings for integers outside +/- (2^53 - 1)."
               }
             },
             "additionalProperties": true,
@@ -653,7 +663,7 @@
     },
     {
       "name": "write_values",
-      "description": "Select one target mode and provide only its parameters.\n\ndb: Write a typed value or raw bytes into a data block. Disabled unless S7_WRITES_ENABLED=true.\n\nWith data_type (BOOL, BYTE, WORD, DWORD, INT, DINT, REAL, STRING) the value is\nrange-checked and encoded big-endian. BOOL needs bit_index and writes only\nthat bit; the other 7 bits of the byte are left untouched. STRING needs\nstring_length, which must match the STRING header in the PLC. Without\ndata_type, value is raw bytes: a hex string (\"0a ff\") or a list of 0-255.\nbit_index is only accepted with BOOL and string_length only with STRING;\nto change a single bit, use data_type BOOL.\n\nArgs:\n    db_number: Data block number, 1-65535.\n    start_offset: Byte offset to write at.\n    value: The value to write.\n    data_type: Optional type, see above.\n    size: Optional expected byte count (checked against value or data_type).\n    bit_index: Bit 0-7, required for BOOL and rejected otherwise.\n    string_length: N of STRING[N], required for STRING and rejected otherwise.\n\noutput: Write process-image outputs (Q area). Disabled unless S7_WRITES_ENABLED=true.\n\nOutputs drive physical equipment. Takes the same value/data_type rules as\nwrite_db; a BOOL write (with bit_index) changes only that output bit.\n\nArgs:\n    start_byte: Output byte (QB) to write at.\n    value: The value to write.\n    data_type: Optional BOOL, BYTE, WORD, DWORD, INT, DINT, REAL or STRING.\n    size: Optional expected byte count (checked against value or data_type).\n    bit_index: Bit 0-7, required for BOOL and rejected otherwise.\n    string_length: N of STRING[N], required for STRING and rejected otherwise.\n\nmarker: Write marker memory (M area). Disabled unless S7_WRITES_ENABLED=true.\n\nSame value/data_type rules as write_db; a BOOL write (with bit_index)\nchanges only that marker bit.\n\nArgs:\n    start_byte: Marker byte (MB) to write at.\n    value: The value to write.\n    data_type: Optional BOOL, BYTE, WORD, DWORD, INT, DINT, REAL or STRING.\n    size: Optional expected byte count (checked against value or data_type).\n    bit_index: Bit 0-7, required for BOOL and rejected otherwise.\n    string_length: N of STRING[N], required for STRING and rejected otherwise.\n\ntag: Write a value to a tag from the tag map. Disabled unless S7_WRITES_ENABLED=true.\n\nUses the tag's data_type with the write_db rules (a BOOL tag needs a bit;\na STRING tag needs string_length).\n\nArgs:\n    name: Tag name as listed by list_tags.\n    value: The value to write.\n\nbatch: Write several addresses in one call. Disabled unless S7_WRITES_ENABLED=true.\n\nEntries use the read_multiple_vars address keys plus value, with the\nwrite_db rules (BOOL needs a bit and writes only that bit; STRING needs\nstring_length; inputs are read-only). Every entry is checked before\nanything is written: values and addresses locally, then each target\nrange is read from the PLC (STRING headers included). If any check fails,\nnothing is written. Entries are then written in order, each sent once; on\nthe first PLC error or lost reply the rest are skipped. success is true\nonly if every entry was written.",
+      "description": "Select one target mode and provide only its parameters.\n\ndb: Write a typed value or raw bytes into a data block. Disabled unless S7_WRITES_ENABLED=true.\n\nWith data_type (BOOL, BYTE, WORD, DWORD, INT, DINT, REAL, LINT, ULINT, LREAL, STRING) the value is\nrange-checked and encoded big-endian. BOOL needs bit_index and writes only\nthat bit; the other 7 bits of the byte are left untouched. STRING needs\nstring_length, which must match the STRING header in the PLC. Without\ndata_type, value is raw bytes: a hex string (\"0a ff\") or a list of 0-255.\nbit_index is only accepted with BOOL and string_length only with STRING;\nto change a single bit, use data_type BOOL.\n\nArgs:\n    db_number: Data block number, 1-65535.\n    start_offset: Byte offset to write at.\n    value: The value to write.\n    data_type: Optional type, see above.\n    size: Optional expected byte count (checked against value or data_type).\n    bit_index: Bit 0-7, required for BOOL and rejected otherwise.\n    string_length: N of STRING[N], required for STRING and rejected otherwise.\n\noutput: Write process-image outputs (Q area). Disabled unless S7_WRITES_ENABLED=true.\n\nOutputs drive physical equipment. Takes the same value/data_type rules as\nwrite_db; a BOOL write (with bit_index) changes only that output bit.\n\nArgs:\n    start_byte: Output byte (QB) to write at.\n    value: The value to write.\n    data_type: Optional BOOL, BYTE, WORD, DWORD, INT, DINT, REAL, LINT, ULINT, LREAL or STRING.\n    size: Optional expected byte count (checked against value or data_type).\n    bit_index: Bit 0-7, required for BOOL and rejected otherwise.\n    string_length: N of STRING[N], required for STRING and rejected otherwise.\n\nmarker: Write marker memory (M area). Disabled unless S7_WRITES_ENABLED=true.\n\nSame value/data_type rules as write_db; a BOOL write (with bit_index)\nchanges only that marker bit.\n\nArgs:\n    start_byte: Marker byte (MB) to write at.\n    value: The value to write.\n    data_type: Optional BOOL, BYTE, WORD, DWORD, INT, DINT, REAL, LINT, ULINT, LREAL or STRING.\n    size: Optional expected byte count (checked against value or data_type).\n    bit_index: Bit 0-7, required for BOOL and rejected otherwise.\n    string_length: N of STRING[N], required for STRING and rejected otherwise.\n\ntag: Write a value to a tag from the tag map. Disabled unless S7_WRITES_ENABLED=true.\n\nUses the tag's data_type with the write_db rules (a BOOL tag needs a bit;\na STRING tag needs string_length).\n\nArgs:\n    name: Tag name as listed by list_tags.\n    value: The value to write.\n\nbatch: Write several addresses in one call. Disabled unless S7_WRITES_ENABLED=true.\n\nEntries use the read_multiple_vars address keys plus value, with the\nwrite_db rules (BOOL needs a bit and writes only that bit; STRING needs\nstring_length; inputs are read-only). Every entry is checked before\nanything is written: values and addresses locally, then each target\nrange is read from the PLC (STRING headers included). If any check fails,\nnothing is written. Entries are then written in order, each sent once; on\nthe first PLC error or lost reply the rest are skipped. success is true\nonly if every entry was written.\n\nLINT/ULINT are 8-byte integers; writes accept integers or canonical decimal strings. Unsafe JSON integers are returned as decimal strings with meta.encoded_integer_paths. LREAL is 8-byte IEEE-754. Use a commissioned standard DB layout; this does not discover CPU type support or enable optimized DB access.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1356,6 +1366,16 @@
               },
               "simulated": {
                 "type": "boolean"
+              },
+              "value_encoding": {
+                "const": "decimal_string"
+              },
+              "encoded_integer_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "JSON pointers to exact decimal strings for integers outside +/- (2^53 - 1)."
               }
             },
             "additionalProperties": true,
@@ -1483,6 +1503,16 @@
               },
               "simulated": {
                 "type": "boolean"
+              },
+              "value_encoding": {
+                "const": "decimal_string"
+              },
+              "encoded_integer_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "JSON pointers to exact decimal strings for integers outside +/- (2^53 - 1)."
               }
             },
             "additionalProperties": true,
@@ -1590,6 +1620,16 @@
               },
               "simulated": {
                 "type": "boolean"
+              },
+              "value_encoding": {
+                "const": "decimal_string"
+              },
+              "encoded_integer_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "JSON pointers to exact decimal strings for integers outside +/- (2^53 - 1)."
               }
             },
             "additionalProperties": true,
@@ -1710,6 +1750,16 @@
               },
               "simulated": {
                 "type": "boolean"
+              },
+              "value_encoding": {
+                "const": "decimal_string"
+              },
+              "encoded_integer_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "JSON pointers to exact decimal strings for integers outside +/- (2^53 - 1)."
               }
             },
             "additionalProperties": true,
@@ -1814,6 +1864,16 @@
               },
               "simulated": {
                 "type": "boolean"
+              },
+              "value_encoding": {
+                "const": "decimal_string"
+              },
+              "encoded_integer_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "JSON pointers to exact decimal strings for integers outside +/- (2^53 - 1)."
               }
             },
             "additionalProperties": true,
@@ -1958,6 +2018,16 @@
               },
               "simulated": {
                 "type": "boolean"
+              },
+              "value_encoding": {
+                "const": "decimal_string"
+              },
+              "encoded_integer_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "JSON pointers to exact decimal strings for integers outside +/- (2^53 - 1)."
               }
             },
             "additionalProperties": true,
@@ -2076,6 +2146,16 @@
               },
               "simulated": {
                 "type": "boolean"
+              },
+              "value_encoding": {
+                "const": "decimal_string"
+              },
+              "encoded_integer_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "JSON pointers to exact decimal strings for integers outside +/- (2^53 - 1)."
               }
             },
             "additionalProperties": true,
@@ -2202,6 +2282,13 @@
                       },
                       "transport": {
                         "type": "string"
+                      },
+                      "data_types": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Available byte codecs, not discovered CPU type support."
                       }
                     }
                   }
@@ -2257,6 +2344,16 @@
               },
               "simulated": {
                 "type": "boolean"
+              },
+              "value_encoding": {
+                "const": "decimal_string"
+              },
+              "encoded_integer_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "JSON pointers to exact decimal strings for integers outside +/- (2^53 - 1)."
               }
             },
             "additionalProperties": true,
@@ -3595,6 +3692,13 @@
             },
             "transport": {
               "type": "string"
+            },
+            "data_types": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Available byte codecs, not discovered CPU type support."
             }
           }
         }

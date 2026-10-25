@@ -55,7 +55,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
     ) -> Envelope:
         """Read one typed value from a data block and decode it.
 
-        data_type is BOOL, BYTE, WORD, DWORD, INT, DINT, REAL or STRING (S7 STRING
+        data_type is BOOL, BYTE, WORD, DWORD, INT, DINT, REAL, LINT, ULINT, LREAL or STRING (S7 STRING
         with its 2-byte max/current length header; the text is returned without it).
         Values are big-endian as stored by the PLC.
 
@@ -82,7 +82,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
     ) -> Envelope:
         """Write a typed value or raw bytes into a data block. Disabled unless S7_WRITES_ENABLED=true.
 
-        With data_type (BOOL, BYTE, WORD, DWORD, INT, DINT, REAL, STRING) the value is
+        With data_type (BOOL, BYTE, WORD, DWORD, INT, DINT, REAL, LINT, ULINT, LREAL, STRING) the value is
         range-checked and encoded big-endian. BOOL needs bit_index and writes only
         that bit; the other 7 bits of the byte are left untouched. STRING needs
         string_length, which must match the STRING header in the PLC. Without
@@ -138,7 +138,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         Args:
             start_byte: Output byte (QB) to write at.
             value: The value to write.
-            data_type: Optional BOOL, BYTE, WORD, DWORD, INT, DINT, REAL or STRING.
+            data_type: Optional BOOL, BYTE, WORD, DWORD, INT, DINT, REAL, LINT, ULINT, LREAL or STRING.
             size: Optional expected byte count (checked against value or data_type).
             bit_index: Bit 0-7, required for BOOL and rejected otherwise.
             string_length: N of STRING[N], required for STRING and rejected otherwise.
@@ -172,7 +172,7 @@ def register_tools(server: FastMCP, resources: ToolResources) -> None:
         Args:
             start_byte: Marker byte (MB) to write at.
             value: The value to write.
-            data_type: Optional BOOL, BYTE, WORD, DWORD, INT, DINT, REAL or STRING.
+            data_type: Optional BOOL, BYTE, WORD, DWORD, INT, DINT, REAL, LINT, ULINT, LREAL or STRING.
             size: Optional expected byte count (checked against value or data_type).
             bit_index: Bit 0-7, required for BOOL and rejected otherwise.
             string_length: N of STRING[N], required for STRING and rejected otherwise.

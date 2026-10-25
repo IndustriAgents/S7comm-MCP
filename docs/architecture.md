@@ -215,3 +215,5 @@ Native interruption, ownership handoff and client destruction share an ownership
 fence. Raw and STRING reads require the complete requested range before success.
 
 Edit named `resultShapes` in `contract/tools.json`, run `python3 scripts/sync_contract.py` to regenerate advertised data schemas and the packaged resource, then run `python3 scripts/verify_contract.py` to check drift.
+
+LINT, ULINT and LREAL use the same byte-addressed domain codec and preflight as existing typed operations. Decimal-string integer input is parsed exactly before range validation. `protocol/value_encoding.py` converts unsafe integers only in the final wire response, after execution/audit, and provides JSON-pointer metadata; application values remain exact integers.

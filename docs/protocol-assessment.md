@@ -29,7 +29,7 @@ calls and return-code handling are verified against the actual installed 2.x API
 | Workflow / tools | Existing capability | Gap addressed / acceptance evidence | Remaining boundary |
 |---|---|---|---|
 | Inspect: `get_connection_status` | Offline connection/configuration report | Typed canonical-tool capability map, native gate state and prerequisites; `test_capabilities.py`, artifact smoke | Does not probe permissions or prove PLC reachability |
-| Read: `read_values` | DB/input/output/marker, typed values, aliases and batches | Raw reads and STRING header/storage must match the requested length; `test_read_integrity.py` | No fake source quality/timestamp; multi-read results are not atomic |
+| Read: `read_values` | DB/input/output/marker, typed values including exact 64-bit codecs, aliases and batches | Raw reads and STRING header/storage must match the requested length; `test_read_integrity.py` | No fake source quality/timestamp; multi-read results are not atomic |
 | Metadata/diagnostics: `read_plc_info`, `read_cpu_state`, `read_system_time`, `read_szl`, `list_tags` | Selected native services and configured tag metadata | Existing codecs, native return-code checks and suites retained | PLC service availability varies; tag aliases are a local map |
 | Write: `write_values` | Type/range checks, bit writes, complete batch prechecks and no replay | Session ownership fenced against late interruption; `test_session_ownership.py` and existing write-safety tests | Partial application remains possible; address layout must be supplied |
 | CPU command: `set_cpu_state` | Requires write and system gates; polls observed CPU state | Native operation/cancellation ownership preserved and tested | A timeout may mean the state is still changing; no resend |
@@ -62,3 +62,46 @@ including typed outcome/completeness metadata and nullable failure data. Native
 values retain explicit JSON value flexibility. CI validates live canonical MCP
 responses against those schemas and checks text/structured result agreement;
 legacy aliases retain their compatibility payload shapes.
+
+## Second improvement pass: exact 64-bit typed values
+
+Typed DB/area/tag/batch operations now accept `LINT`, `ULINT` and `LREAL` in
+addition to the existing types. Each uses eight bytes from the commissioned
+standard (non-optimized) DB layout. This is raw byte interpretation, not symbolic
+S7-1500 access or runtime discovery of CPU type support. The server cannot verify
+that an operator-supplied offset matches the PLC declaration.
+
+Siemens defines [LINT](https://docs.tia.siemens.cloud/r/en-us/v20/data-types/integers/lint-64-bit-integers-s7-1500)
+as signed two's-complement 64-bit and
+[ULINT](https://docs.tia.siemens.cloud/r/en-us/v20/data-types/integers/ulint-64-bit-integers-s7-1500)
+as unsigned 64-bit. The [type availability table](https://docs.tia.siemens.cloud/r/en-us/v21/data-types/overview-of-the-valid-data-types)
+distinguishes S7 CPU families; LINT/ULINT support must not be assumed on S7-300/400
+or original S7-1200 CPUs. LREAL is IEEE-754 binary64; the pinned
+[python-snap7 2.0.2 utility implementation](https://github.com/gijzelaerr/python-snap7/blob/2.0.2/snap7/util/getters.py)
+reads it big-endian, consistent with this adapter's existing byte-oriented codec.
+
+LINT/ULINT writes accept JSON integers or **canonical decimal strings** (for
+example `"18446744073709551615"`); use strings when the caller cannot represent
+the integer exactly. No floating-point conversion is used. Fractions, booleans,
+exponents, signs with `+`, leading zeros, whitespace and out-of-range values fail
+before dispatch. Other integer types retain their existing strict inputs.
+LREAL writes require a finite JSON number; nonfinite PLC reads are reported as
+`"inf"`, `"-inf"` or `"nan"` with `raw_bytes_hex` preserved.
+
+Internal arithmetic/decoding retains exact Python integers. Only at the final MCP
+wire boundary, integers outside ±(2^53−1) become exact decimal strings; safe
+integers remain numbers. `meta.value_encoding="decimal_string"` and
+`meta.encoded_integer_paths` identify converted values, including batch results.
+This is an additive type feature; existing value types are unchanged.
+Golden bytes cover signed/unsigned boundaries and double precision. A real local
+Snap7 server plus MCP stdio verifies writes, reads and JSON boundary precision.
+Existing write gates, preflight and no-replay ownership remain unchanged.
+
+### Prioritized remaining improvements
+
+1. Add explicit per-entry timing/observation metadata to sequential batch reads;
+   a batch is not an atomic PLC snapshot.
+2. Add S7 DATE/DTL/WSTRING codecs with independent Siemens-layout fixtures and
+   declared timezone/encoding policy before exposing inferred application values.
+3. Secure/symbolic optimized DB access needs a different supported S7 stack;
+   retain the pinned native API until ownership and cancellation are revalidated.
