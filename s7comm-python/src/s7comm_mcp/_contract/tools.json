@@ -349,7 +349,251 @@
           "success": {
             "type": "boolean"
           },
-          "data": {},
+          "data": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "raw_bytes_hex": {
+                        "type": "string",
+                        "pattern": "^(?:[0-9a-fA-F]{2})*$",
+                        "description": "Raw bytes encoded as hexadecimal octets."
+                      },
+                      "byte_count": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "value": {
+                        "type": [
+                          "null",
+                          "boolean",
+                          "number",
+                          "string",
+                          "array",
+                          "object"
+                        ],
+                        "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                      },
+                      "data_type": {
+                        "type": "string"
+                      },
+                      "length": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "max_length": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "bit": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "tag": {
+                        "type": "string"
+                      }
+                    },
+                    "additionalProperties": true,
+                    "required": [
+                      "raw_bytes_hex"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "results": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "index": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "spec": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": [
+                                  "null",
+                                  "boolean",
+                                  "number",
+                                  "string",
+                                  "array",
+                                  "object"
+                                ],
+                                "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                              },
+                              "description": "Protocol or configured-map record; additional vendor-defined fields are preserved."
+                            },
+                            "success": {
+                              "type": "boolean"
+                            },
+                            "error": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "address": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": [
+                                  "null",
+                                  "boolean",
+                                  "number",
+                                  "string",
+                                  "array",
+                                  "object"
+                                ],
+                                "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                              },
+                              "description": "Protocol or configured-map record; additional vendor-defined fields are preserved."
+                            },
+                            "data": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "raw_bytes_hex": {
+                                      "type": "string",
+                                      "pattern": "^(?:[0-9a-fA-F]{2})*$",
+                                      "description": "Raw bytes encoded as hexadecimal octets."
+                                    },
+                                    "byte_count": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "value": {
+                                      "type": [
+                                        "null",
+                                        "boolean",
+                                        "number",
+                                        "string",
+                                        "array",
+                                        "object"
+                                      ],
+                                      "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                                    },
+                                    "data_type": {
+                                      "type": "string"
+                                    },
+                                    "length": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "max_length": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "bit": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "tag": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "additionalProperties": true,
+                                  "required": [
+                                    "raw_bytes_hex"
+                                  ]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "area": {
+                                      "type": "string"
+                                    },
+                                    "offset": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "db_number": {
+                                      "type": [
+                                        "integer",
+                                        "null"
+                                      ]
+                                    },
+                                    "data_type": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "written_bytes": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "written_bits": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "value": {
+                                      "type": [
+                                        "null",
+                                        "boolean",
+                                        "number",
+                                        "string",
+                                        "array",
+                                        "object"
+                                      ],
+                                      "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                                    },
+                                    "tag": {
+                                      "type": "string"
+                                    },
+                                    "length": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "max_length": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "additionalProperties": true,
+                                  "required": [
+                                    "area",
+                                    "offset"
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string"
+                            },
+                            "request_sent": {
+                              "type": [
+                                "boolean",
+                                "null"
+                              ]
+                            }
+                          },
+                          "additionalProperties": true,
+                          "required": [
+                            "index",
+                            "success"
+                          ]
+                        }
+                      }
+                    },
+                    "additionalProperties": true,
+                    "required": [
+                      "results"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
           "error": {
             "type": [
               "string",
@@ -357,7 +601,51 @@
             ]
           },
           "meta": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "outcome": {
+                "type": "string",
+                "description": "Native operation outcome. unknown means the action may have applied and must not be automatically replayed."
+              },
+              "request_sent": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "False proves no dispatch; null means the boundary has no dispatch evidence."
+              },
+              "duration_ms": {
+                "type": "number"
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "pages": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "audit_error": {
+                "type": "boolean"
+              },
+              "backend": {
+                "type": "string"
+              },
+              "simulated": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": true,
+            "description": "Protocol-specific diagnostics and completeness. Absence of a field does not establish success, freshness or physical completion."
           }
         },
         "additionalProperties": false
@@ -763,7 +1051,263 @@
           "success": {
             "type": "boolean"
           },
-          "data": {},
+          "data": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "area": {
+                        "type": "string"
+                      },
+                      "offset": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "db_number": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "data_type": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "written_bytes": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "written_bits": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "value": {
+                        "type": [
+                          "null",
+                          "boolean",
+                          "number",
+                          "string",
+                          "array",
+                          "object"
+                        ],
+                        "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                      },
+                      "tag": {
+                        "type": "string"
+                      },
+                      "length": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "max_length": {
+                        "type": "integer",
+                        "minimum": 0
+                      }
+                    },
+                    "additionalProperties": true,
+                    "required": [
+                      "area",
+                      "offset"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "results": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "index": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "spec": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": [
+                                  "null",
+                                  "boolean",
+                                  "number",
+                                  "string",
+                                  "array",
+                                  "object"
+                                ],
+                                "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                              },
+                              "description": "Protocol or configured-map record; additional vendor-defined fields are preserved."
+                            },
+                            "success": {
+                              "type": "boolean"
+                            },
+                            "error": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "address": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": [
+                                  "null",
+                                  "boolean",
+                                  "number",
+                                  "string",
+                                  "array",
+                                  "object"
+                                ],
+                                "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                              },
+                              "description": "Protocol or configured-map record; additional vendor-defined fields are preserved."
+                            },
+                            "data": {
+                              "anyOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "raw_bytes_hex": {
+                                      "type": "string",
+                                      "pattern": "^(?:[0-9a-fA-F]{2})*$",
+                                      "description": "Raw bytes encoded as hexadecimal octets."
+                                    },
+                                    "byte_count": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "value": {
+                                      "type": [
+                                        "null",
+                                        "boolean",
+                                        "number",
+                                        "string",
+                                        "array",
+                                        "object"
+                                      ],
+                                      "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                                    },
+                                    "data_type": {
+                                      "type": "string"
+                                    },
+                                    "length": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "max_length": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "bit": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "tag": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "additionalProperties": true,
+                                  "required": [
+                                    "raw_bytes_hex"
+                                  ]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "area": {
+                                      "type": "string"
+                                    },
+                                    "offset": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "db_number": {
+                                      "type": [
+                                        "integer",
+                                        "null"
+                                      ]
+                                    },
+                                    "data_type": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "written_bytes": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "written_bits": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "value": {
+                                      "type": [
+                                        "null",
+                                        "boolean",
+                                        "number",
+                                        "string",
+                                        "array",
+                                        "object"
+                                      ],
+                                      "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                                    },
+                                    "tag": {
+                                      "type": "string"
+                                    },
+                                    "length": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "max_length": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    }
+                                  },
+                                  "additionalProperties": true,
+                                  "required": [
+                                    "area",
+                                    "offset"
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string"
+                            },
+                            "request_sent": {
+                              "type": [
+                                "boolean",
+                                "null"
+                              ]
+                            }
+                          },
+                          "additionalProperties": true,
+                          "required": [
+                            "index",
+                            "success"
+                          ]
+                        }
+                      }
+                    },
+                    "additionalProperties": true,
+                    "required": [
+                      "results"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
           "error": {
             "type": [
               "string",
@@ -771,7 +1315,51 @@
             ]
           },
           "meta": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "outcome": {
+                "type": "string",
+                "description": "Native operation outcome. unknown means the action may have applied and must not be automatically replayed."
+              },
+              "request_sent": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "False proves no dispatch; null means the boundary has no dispatch evidence."
+              },
+              "duration_ms": {
+                "type": "number"
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "pages": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "audit_error": {
+                "type": "boolean"
+              },
+              "backend": {
+                "type": "string"
+              },
+              "simulated": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": true,
+            "description": "Protocol-specific diagnostics and completeness. Absence of a field does not establish success, freshness or physical completion."
           }
         },
         "additionalProperties": false
@@ -798,7 +1386,55 @@
           "success": {
             "type": "boolean"
           },
-          "data": {},
+          "data": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "module_type": {
+                    "type": "string"
+                  },
+                  "module_name": {
+                    "type": "string"
+                  },
+                  "serial_number": {
+                    "type": "string"
+                  },
+                  "as_name": {
+                    "type": "string"
+                  },
+                  "copyright": {
+                    "type": "string"
+                  },
+                  "order_code": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "version": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "module_type",
+                  "module_name",
+                  "serial_number",
+                  "as_name",
+                  "copyright",
+                  "order_code",
+                  "version"
+                ]
+              }
+            ]
+          },
           "error": {
             "type": [
               "string",
@@ -806,7 +1442,51 @@
             ]
           },
           "meta": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "outcome": {
+                "type": "string",
+                "description": "Native operation outcome. unknown means the action may have applied and must not be automatically replayed."
+              },
+              "request_sent": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "False proves no dispatch; null means the boundary has no dispatch evidence."
+              },
+              "duration_ms": {
+                "type": "number"
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "pages": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "audit_error": {
+                "type": "boolean"
+              },
+              "backend": {
+                "type": "string"
+              },
+              "simulated": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": true,
+            "description": "Protocol-specific diagnostics and completeness. Absence of a field does not establish success, freshness or physical completion."
           }
         },
         "additionalProperties": false
@@ -839,7 +1519,29 @@
           "success": {
             "type": "boolean"
           },
-          "data": {},
+          "data": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "state",
+                  "mode"
+                ]
+              }
+            ]
+          },
           "error": {
             "type": [
               "string",
@@ -847,7 +1549,51 @@
             ]
           },
           "meta": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "outcome": {
+                "type": "string",
+                "description": "Native operation outcome. unknown means the action may have applied and must not be automatically replayed."
+              },
+              "request_sent": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "False proves no dispatch; null means the boundary has no dispatch evidence."
+              },
+              "duration_ms": {
+                "type": "number"
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "pages": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "audit_error": {
+                "type": "boolean"
+              },
+              "backend": {
+                "type": "string"
+              },
+              "simulated": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": true,
+            "description": "Protocol-specific diagnostics and completeness. Absence of a field does not establish success, freshness or physical completion."
           }
         },
         "additionalProperties": false
@@ -889,7 +1635,33 @@
           "success": {
             "type": "boolean"
           },
-          "data": {},
+          "data": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "string"
+                  },
+                  "requested_state": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "state",
+                  "mode",
+                  "requested_state"
+                ]
+              }
+            ]
+          },
           "error": {
             "type": [
               "string",
@@ -897,7 +1669,51 @@
             ]
           },
           "meta": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "outcome": {
+                "type": "string",
+                "description": "Native operation outcome. unknown means the action may have applied and must not be automatically replayed."
+              },
+              "request_sent": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "False proves no dispatch; null means the boundary has no dispatch evidence."
+              },
+              "duration_ms": {
+                "type": "number"
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "pages": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "audit_error": {
+                "type": "boolean"
+              },
+              "backend": {
+                "type": "string"
+              },
+              "simulated": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": true,
+            "description": "Protocol-specific diagnostics and completeness. Absence of a field does not establish success, freshness or physical completion."
           }
         },
         "additionalProperties": false
@@ -930,7 +1746,26 @@
           "success": {
             "type": "boolean"
           },
-          "data": {},
+          "data": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "system_time": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "system_time"
+                ],
+                "description": "PLC-local timestamp; no time zone is inferred."
+              }
+            ]
+          },
           "error": {
             "type": [
               "string",
@@ -938,7 +1773,51 @@
             ]
           },
           "meta": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "outcome": {
+                "type": "string",
+                "description": "Native operation outcome. unknown means the action may have applied and must not be automatically replayed."
+              },
+              "request_sent": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "False proves no dispatch; null means the boundary has no dispatch evidence."
+              },
+              "duration_ms": {
+                "type": "number"
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "pages": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "audit_error": {
+                "type": "boolean"
+              },
+              "backend": {
+                "type": "string"
+              },
+              "simulated": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": true,
+            "description": "Protocol-specific diagnostics and completeness. Absence of a field does not establish success, freshness or physical completion."
           }
         },
         "additionalProperties": false
@@ -986,7 +1865,51 @@
           "success": {
             "type": "boolean"
           },
-          "data": {},
+          "data": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "szl_id": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "szl_index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "record_length": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "record_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "records_hex": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(?:[0-9a-fA-F]{2})*$",
+                      "description": "Raw bytes encoded as hexadecimal octets."
+                    }
+                  },
+                  "raw_hex": {
+                    "type": "string",
+                    "pattern": "^(?:[0-9a-fA-F]{2})*$",
+                    "description": "Raw bytes encoded as hexadecimal octets."
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "records_hex"
+                ]
+              }
+            ]
+          },
           "error": {
             "type": [
               "string",
@@ -994,7 +1917,51 @@
             ]
           },
           "meta": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "outcome": {
+                "type": "string",
+                "description": "Native operation outcome. unknown means the action may have applied and must not be automatically replayed."
+              },
+              "request_sent": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "False proves no dispatch; null means the boundary has no dispatch evidence."
+              },
+              "duration_ms": {
+                "type": "number"
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "pages": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "audit_error": {
+                "type": "boolean"
+              },
+              "backend": {
+                "type": "string"
+              },
+              "simulated": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": true,
+            "description": "Protocol-specific diagnostics and completeness. Absence of a field does not establish success, freshness or physical completion."
           }
         },
         "additionalProperties": false
@@ -1027,7 +1994,40 @@
           "success": {
             "type": "boolean"
           },
-          "data": {},
+          "data": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": [
+                          "null",
+                          "boolean",
+                          "number",
+                          "string",
+                          "array",
+                          "object"
+                        ],
+                        "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                      },
+                      "description": "Protocol or configured-map record; additional vendor-defined fields are preserved."
+                    }
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "tags"
+                ]
+              }
+            ]
+          },
           "error": {
             "type": [
               "string",
@@ -1035,7 +2035,51 @@
             ]
           },
           "meta": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "outcome": {
+                "type": "string",
+                "description": "Native operation outcome. unknown means the action may have applied and must not be automatically replayed."
+              },
+              "request_sent": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "False proves no dispatch; null means the boundary has no dispatch evidence."
+              },
+              "duration_ms": {
+                "type": "number"
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "pages": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "audit_error": {
+                "type": "boolean"
+              },
+              "backend": {
+                "type": "string"
+              },
+              "simulated": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": true,
+            "description": "Protocol-specific diagnostics and completeness. Absence of a field does not establish success, freshness or physical completion."
           }
         },
         "additionalProperties": false
@@ -1049,7 +2093,7 @@
     },
     {
       "name": "get_connection_status",
-      "description": "Report the configured PLC address and whether a connection is currently open.\n\nDoes not contact the PLC; the connection opens on the first tool call that\nneeds it (use ping to test reachability). last_error holds the most recent\nfailure, if any.",
+      "description": "Report the configured PLC address and whether a connection is currently open.\n\nDoes not contact the PLC; the connection opens on the first tool call that\nneeds it (use ping to test reachability). last_error holds the most recent\nfailure, if any. Backend capabilities describe software support and configuration gates, not device permissions or verified reachability.",
       "inputSchema": {
         "properties": {},
         "title": "get_connection_statusArguments",
@@ -1068,7 +2112,103 @@
           "success": {
             "type": "boolean"
           },
-          "data": {},
+          "data": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "capabilities"
+                ],
+                "properties": {
+                  "capabilities": {
+                    "type": "object",
+                    "required": [
+                      "protocol",
+                      "backend",
+                      "simulated",
+                      "scope",
+                      "device_verified",
+                      "operations",
+                      "prerequisites",
+                      "limitations",
+                      "authorization"
+                    ],
+                    "properties": {
+                      "protocol": {
+                        "const": "s7comm"
+                      },
+                      "backend": {
+                        "type": "string"
+                      },
+                      "simulated": {
+                        "type": "boolean"
+                      },
+                      "scope": {
+                        "const": "backend_support"
+                      },
+                      "device_verified": {
+                        "const": false
+                      },
+                      "operations": {
+                        "type": "object",
+                        "required": [
+                          "read_values",
+                          "write_values",
+                          "read_plc_info",
+                          "read_cpu_state",
+                          "set_cpu_state",
+                          "read_system_time",
+                          "read_szl",
+                          "list_tags",
+                          "get_connection_status"
+                        ],
+                        "additionalProperties": {
+                          "type": "object",
+                          "required": [
+                            "supported",
+                            "enabled"
+                          ],
+                          "properties": {
+                            "supported": {
+                              "type": "boolean"
+                            },
+                            "enabled": {
+                              "type": "boolean"
+                            },
+                            "reason": {
+                              "type": "string"
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "prerequisites": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "limitations": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "authorization": {
+                        "type": "string"
+                      },
+                      "transport": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
           "error": {
             "type": [
               "string",
@@ -1076,7 +2216,51 @@
             ]
           },
           "meta": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "outcome": {
+                "type": "string",
+                "description": "Native operation outcome. unknown means the action may have applied and must not be automatically replayed."
+              },
+              "request_sent": {
+                "type": [
+                  "boolean",
+                  "null"
+                ],
+                "description": "False proves no dispatch; null means the boundary has no dispatch evidence."
+              },
+              "duration_ms": {
+                "type": "number"
+              },
+              "attempts": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "pages": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "audit_error": {
+                "type": "boolean"
+              },
+              "backend": {
+                "type": "string"
+              },
+              "simulated": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": true,
+            "description": "Protocol-specific diagnostics and completeness. Absence of a field does not establish success, freshness or physical completion."
           }
         },
         "additionalProperties": false
@@ -1100,7 +2284,8 @@
         "marker": "read_marker",
         "tag": "read_tag",
         "batch": "read_multiple_vars"
-      }
+      },
+      "resultShape": "read_values"
     },
     "write_values": {
       "selector": "target",
@@ -1110,28 +2295,36 @@
         "marker": "write_marker",
         "tag": "write_tag",
         "batch": "write_multiple_vars"
-      }
+      },
+      "resultShape": "write_values"
     },
     "read_plc_info": {
-      "handler": "read_plc_info"
+      "handler": "read_plc_info",
+      "resultShape": "read_plc_info"
     },
     "read_cpu_state": {
-      "handler": "read_cpu_state"
+      "handler": "read_cpu_state",
+      "resultShape": "read_cpu_state"
     },
     "set_cpu_state": {
-      "handler": "set_cpu_state"
+      "handler": "set_cpu_state",
+      "resultShape": "set_cpu_state"
     },
     "read_system_time": {
-      "handler": "read_system_time"
+      "handler": "read_system_time",
+      "resultShape": "read_system_time"
     },
     "read_szl": {
-      "handler": "read_szl"
+      "handler": "read_szl",
+      "resultShape": "read_szl"
     },
     "list_tags": {
-      "handler": "list_tags"
+      "handler": "list_tags",
+      "resultShape": "list_tags"
     },
     "get_connection_status": {
-      "handler": "get_connection_status"
+      "handler": "get_connection_status",
+      "resultShape": "get_connection_status"
     }
   },
   "legacy": {
@@ -1671,5 +2864,741 @@
     "maxNestingDepth": 32,
     "maxContainerItems": 10000,
     "maxTotalValues": 50000
+  },
+  "resultShapes": {
+    "read_values": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "raw_bytes_hex": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-fA-F]{2})*$",
+              "description": "Raw bytes encoded as hexadecimal octets."
+            },
+            "byte_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "value": {
+              "type": [
+                "null",
+                "boolean",
+                "number",
+                "string",
+                "array",
+                "object"
+              ],
+              "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+            },
+            "data_type": {
+              "type": "string"
+            },
+            "length": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max_length": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "bit": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "tag": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "raw_bytes_hex"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "results": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "spec": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "null",
+                        "boolean",
+                        "number",
+                        "string",
+                        "array",
+                        "object"
+                      ],
+                      "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                    },
+                    "description": "Protocol or configured-map record; additional vendor-defined fields are preserved."
+                  },
+                  "success": {
+                    "type": "boolean"
+                  },
+                  "error": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "address": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "null",
+                        "boolean",
+                        "number",
+                        "string",
+                        "array",
+                        "object"
+                      ],
+                      "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                    },
+                    "description": "Protocol or configured-map record; additional vendor-defined fields are preserved."
+                  },
+                  "data": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "raw_bytes_hex": {
+                            "type": "string",
+                            "pattern": "^(?:[0-9a-fA-F]{2})*$",
+                            "description": "Raw bytes encoded as hexadecimal octets."
+                          },
+                          "byte_count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "value": {
+                            "type": [
+                              "null",
+                              "boolean",
+                              "number",
+                              "string",
+                              "array",
+                              "object"
+                            ],
+                            "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                          },
+                          "data_type": {
+                            "type": "string"
+                          },
+                          "length": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "max_length": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "bit": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "tag": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": true,
+                        "required": [
+                          "raw_bytes_hex"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "area": {
+                            "type": "string"
+                          },
+                          "offset": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "db_number": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ]
+                          },
+                          "data_type": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "written_bytes": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "written_bits": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "value": {
+                            "type": [
+                              "null",
+                              "boolean",
+                              "number",
+                              "string",
+                              "array",
+                              "object"
+                            ],
+                            "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                          },
+                          "tag": {
+                            "type": "string"
+                          },
+                          "length": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "max_length": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "additionalProperties": true,
+                        "required": [
+                          "area",
+                          "offset"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "outcome": {
+                    "type": "string"
+                  },
+                  "request_sent": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "index",
+                  "success"
+                ]
+              }
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "results"
+          ]
+        }
+      ]
+    },
+    "write_values": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "area": {
+              "type": "string"
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "db_number": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "data_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "written_bytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "written_bits": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "value": {
+              "type": [
+                "null",
+                "boolean",
+                "number",
+                "string",
+                "array",
+                "object"
+              ],
+              "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+            },
+            "tag": {
+              "type": "string"
+            },
+            "length": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max_length": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "area",
+            "offset"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "results": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "spec": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "null",
+                        "boolean",
+                        "number",
+                        "string",
+                        "array",
+                        "object"
+                      ],
+                      "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                    },
+                    "description": "Protocol or configured-map record; additional vendor-defined fields are preserved."
+                  },
+                  "success": {
+                    "type": "boolean"
+                  },
+                  "error": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "address": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": [
+                        "null",
+                        "boolean",
+                        "number",
+                        "string",
+                        "array",
+                        "object"
+                      ],
+                      "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                    },
+                    "description": "Protocol or configured-map record; additional vendor-defined fields are preserved."
+                  },
+                  "data": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "raw_bytes_hex": {
+                            "type": "string",
+                            "pattern": "^(?:[0-9a-fA-F]{2})*$",
+                            "description": "Raw bytes encoded as hexadecimal octets."
+                          },
+                          "byte_count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "value": {
+                            "type": [
+                              "null",
+                              "boolean",
+                              "number",
+                              "string",
+                              "array",
+                              "object"
+                            ],
+                            "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                          },
+                          "data_type": {
+                            "type": "string"
+                          },
+                          "length": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "max_length": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "bit": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "tag": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": true,
+                        "required": [
+                          "raw_bytes_hex"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "area": {
+                            "type": "string"
+                          },
+                          "offset": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "db_number": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ]
+                          },
+                          "data_type": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "written_bytes": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "written_bits": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "value": {
+                            "type": [
+                              "null",
+                              "boolean",
+                              "number",
+                              "string",
+                              "array",
+                              "object"
+                            ],
+                            "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+                          },
+                          "tag": {
+                            "type": "string"
+                          },
+                          "length": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "max_length": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "additionalProperties": true,
+                        "required": [
+                          "area",
+                          "offset"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "outcome": {
+                    "type": "string"
+                  },
+                  "request_sent": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  }
+                },
+                "additionalProperties": true,
+                "required": [
+                  "index",
+                  "success"
+                ]
+              }
+            }
+          },
+          "additionalProperties": true,
+          "required": [
+            "results"
+          ]
+        }
+      ]
+    },
+    "read_plc_info": {
+      "type": "object",
+      "properties": {
+        "module_type": {
+          "type": "string"
+        },
+        "module_name": {
+          "type": "string"
+        },
+        "serial_number": {
+          "type": "string"
+        },
+        "as_name": {
+          "type": "string"
+        },
+        "copyright": {
+          "type": "string"
+        },
+        "order_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "module_type",
+        "module_name",
+        "serial_number",
+        "as_name",
+        "copyright",
+        "order_code",
+        "version"
+      ]
+    },
+    "read_cpu_state": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "state",
+        "mode"
+      ]
+    },
+    "set_cpu_state": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "requested_state": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "state",
+        "mode",
+        "requested_state"
+      ]
+    },
+    "read_system_time": {
+      "type": "object",
+      "properties": {
+        "system_time": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "system_time"
+      ],
+      "description": "PLC-local timestamp; no time zone is inferred."
+    },
+    "read_szl": {
+      "type": "object",
+      "properties": {
+        "szl_id": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "szl_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "record_length": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "records_hex": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?:[0-9a-fA-F]{2})*$",
+            "description": "Raw bytes encoded as hexadecimal octets."
+          }
+        },
+        "raw_hex": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-fA-F]{2})*$",
+          "description": "Raw bytes encoded as hexadecimal octets."
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "records_hex"
+      ]
+    },
+    "list_tags": {
+      "type": "object",
+      "properties": {
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": [
+                "null",
+                "boolean",
+                "number",
+                "string",
+                "array",
+                "object"
+              ],
+              "description": "Protocol-typed JSON value; its datatype and encoding are described by the operation metadata."
+            },
+            "description": "Protocol or configured-map record; additional vendor-defined fields are preserved."
+          }
+        }
+      },
+      "additionalProperties": true,
+      "required": [
+        "tags"
+      ]
+    },
+    "get_connection_status": {
+      "type": "object",
+      "required": [
+        "capabilities"
+      ],
+      "properties": {
+        "capabilities": {
+          "type": "object",
+          "required": [
+            "protocol",
+            "backend",
+            "simulated",
+            "scope",
+            "device_verified",
+            "operations",
+            "prerequisites",
+            "limitations",
+            "authorization"
+          ],
+          "properties": {
+            "protocol": {
+              "const": "s7comm"
+            },
+            "backend": {
+              "type": "string"
+            },
+            "simulated": {
+              "type": "boolean"
+            },
+            "scope": {
+              "const": "backend_support"
+            },
+            "device_verified": {
+              "const": false
+            },
+            "operations": {
+              "type": "object",
+              "required": [
+                "read_values",
+                "write_values",
+                "read_plc_info",
+                "read_cpu_state",
+                "set_cpu_state",
+                "read_system_time",
+                "read_szl",
+                "list_tags",
+                "get_connection_status"
+              ],
+              "additionalProperties": {
+                "type": "object",
+                "required": [
+                  "supported",
+                  "enabled"
+                ],
+                "properties": {
+                  "supported": {
+                    "type": "boolean"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "prerequisites": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "limitations": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "authorization": {
+              "type": "string"
+            },
+            "transport": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
   }
 }

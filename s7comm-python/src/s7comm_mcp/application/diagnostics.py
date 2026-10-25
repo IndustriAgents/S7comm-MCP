@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from s7comm_mcp.domain.capabilities import capability_report
 from s7comm_mcp.domain.model import Envelope, _error_text, fail, ok
 
 
@@ -34,5 +35,9 @@ class DiagnosticsOperations:
                 "writes_enabled": self.resources.config.writes_enabled,
                 "system_cmds_enabled": self.resources.config.system_cmds_enabled,
                 "tag_map": self.resources.tag_map.status(),
+                "capabilities": capability_report(
+                    writes_enabled=self.resources.config.writes_enabled,
+                    system_commands_enabled=self.resources.config.system_cmds_enabled,
+                ),
             }
         )
