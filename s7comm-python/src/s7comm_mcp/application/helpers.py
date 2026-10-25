@@ -17,16 +17,20 @@ from s7comm_mcp.domain.ports import S7ClientPort
 async def read_value(client: S7ClientPort, addr: Address) -> tuple[dict[str, Any], OperationMeta]:
     dtype = addr.data_type
     if dtype is None:
-        payload, meta = await client.read_area(addr.area, addr.offset, addr.size or 1, addr.db_number)
+        size = addr.size or 1
+        payload, meta = await client.read_area(addr.area, addr.offset, size, addr.db_number)
+        _check_read_length(payload, size)
         return ({"raw_bytes_hex": payload.hex(), "byte_count": len(payload)}, meta)
     if dtype == "STRING":
         max_len = addr.string_length
         if max_len is None:
             header, _ = await client.read_area(addr.area, addr.offset, 2, addr.db_number)
+            _check_read_length(header, 2)
             max_len = header[0]
             if max_len == 0:
                 raise ValueError("No S7 STRING at this address: its max-length byte is 0")
         payload, meta = await client.read_area(addr.area, addr.offset, 2 + max_len, addr.db_number)
+        _check_read_length(payload, 2 + max_len)
         text, cur_len = decode_s7_string(payload, max_len)
         data = {"value": text, "data_type": dtype, "length": cur_len, "max_length": max_len}
         return ({**data, "raw_bytes_hex": payload.hex()}, meta)
@@ -38,6 +42,12 @@ async def read_value(client: S7ClientPort, addr: Address) -> tuple[dict[str, Any
     if dtype == "BOOL":
         data["bit"] = addr.bit or 0
     return (data, meta)
+
+
+def _check_read_length(payload: bytes, expected: int) -> None:
+    """A successful read covers the requested range, including STRING storage."""
+    if len(payload) != expected:
+        raise ValueError(f"PLC returned {len(payload)} bytes for the read, expected {expected}")
 
 
 async def precheck_write(client: S7ClientPort, prepared: PreparedWrite) -> None:

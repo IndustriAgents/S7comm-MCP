@@ -327,6 +327,7 @@ class S7Client:
         self._last_error: str | None = None
         self._reset_requested = False
         self._active_call: _Call | None = None
+        self._ownership_lock = threading.Lock()
         self._calls_lock = threading.Lock()
         self._pending_calls: set[_Call] = set()
         self._closing = False
@@ -464,10 +465,13 @@ class S7Client:
         another thread makes the blocked call return within a fraction of a
         second. Only the request that is actually executing is interrupted.
         """
-        client = self._client
-        if self._active_call is call and client is not None:
-            logger.warning("Interrupting a PLC request that overran its deadline")
-            _safe(client.disconnect)
+        # The ownership fence prevents a queued call from acquiring this same
+        # native client between the identity check and disconnect.
+        with self._ownership_lock:
+            client = self._client
+            if self._active_call is call and client is not None:
+                logger.warning("Interrupting a PLC request that overran its deadline")
+                _safe(client.disconnect)
 
     async def ensure_connection(self) -> OperationMeta:
         """Connect if needed; raises :class:`S7ConnectionError` on failure."""
@@ -631,10 +635,11 @@ class S7Client:
 
     def _reset_locked(self) -> None:
         """Disconnect and destroy the current Snap7 client, if any."""
-        client, self._client, self._connected = (self._client, None, False)
-        if client is not None:
-            _safe(client.disconnect)
-            _safe(client.destroy)
+        with self._ownership_lock:
+            client, self._client, self._connected = (self._client, None, False)
+            if client is not None:
+                _safe(client.disconnect)
+                _safe(client.destroy)
 
     def _probe_tcp(self) -> None:
         try:
@@ -714,11 +719,13 @@ class S7Client:
         """
         start = time.perf_counter()
         with self._lock:
-            self._active_call = call
+            with self._ownership_lock:
+                self._active_call = call
             try:
                 return self._execute_locked(op_name, operation, probe, single_pdu, call, start)
             finally:
-                self._active_call = None
+                with self._ownership_lock:
+                    self._active_call = None
 
     def _execute_locked(
         self,

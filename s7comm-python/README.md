@@ -157,3 +157,5 @@ s7comm-python/
 ## Status
 
 All tools return the `{ success, data, error, meta }` envelope and work against the bundled mock. The [known limitations](../README.md#known-limitations) list what is not supported; the server has not yet been validated across a range of real CPUs.
+
+Inspect `get_connection_status` before device work: its `capabilities` describe backend support and native configuration gates, not device permissions or reachability. See the [protocol assessment](https://github.com/IndustriAgents/S7comm-MCP/blob/main/docs/protocol-assessment.md) for supported workflows and verification boundaries.

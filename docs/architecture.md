@@ -201,3 +201,17 @@ whole batch with `not_sent`, even if a valid STRING header was present. Empty
 or non-list legacy batches also report `request_sent:false` explicitly. These
 checks establish that no batch write began; they do not make multi-variable
 writes transactional or replace the existing partial-application reporting.
+
+## Protocol assessment and capability reporting
+
+See [protocol-assessment.md](protocol-assessment.md) for authoritative sources,
+the capability/gap matrix, implementation decisions and hardware test boundaries.
+`get_connection_status` returns typed `data.capabilities` without device I/O.
+`scope: backend_support` and `device_verified: false` distinguish implemented
+software from verified device support. `enabled` reports native configuration
+gates only; policy and device permissions still apply.
+
+Native interruption, ownership handoff and client destruction share an ownership
+fence. Raw and STRING reads require the complete requested range before success.
+
+Edit named `resultShapes` in `contract/tools.json`, run `python3 scripts/sync_contract.py` to regenerate advertised data schemas and the packaged resource, then run `python3 scripts/verify_contract.py` to check drift.

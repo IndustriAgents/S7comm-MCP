@@ -146,3 +146,5 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for local s
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Inspect `get_connection_status` before device work: its `capabilities` describe backend support and native configuration gates, not device permissions or reachability. See the [protocol assessment](docs/protocol-assessment.md) for supported workflows and verification boundaries.
