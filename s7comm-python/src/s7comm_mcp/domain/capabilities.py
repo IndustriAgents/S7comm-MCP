@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from .model import SUPPORTED_TYPES
+
 
 def capability_report(*, writes_enabled: bool, system_commands_enabled: bool = False) -> dict[str, Any]:
     operations = {
@@ -25,9 +27,11 @@ def capability_report(*, writes_enabled: bool, system_commands_enabled: bool = F
         "scope": "backend_support",
         "device_verified": False,
         "operations": operations,
+        "data_types": list(SUPPORTED_TYPES),
         "prerequisites": [
             "A configured PLC with supported S7 communication access and correct rack/slot is required.",
             "Absolute DB access requires compatible block layouts and PLC access settings.",
+            "64-bit type support and mapped layout must be commissioned for the selected CPU family.",
         ],
         "limitations": [
             "Symbolic optimized-block access, S7comm Plus, native subscriptions "

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import struct
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -15,7 +16,18 @@ MAX_IO_BYTES = 65535
 MAX_BATCH = 100
 STRING_MAX_CHARS = 254
 FLOAT32_MAX = 3.4028234663852886e38
-TYPE_SIZES: dict[str, int] = {"BOOL": 1, "BYTE": 1, "WORD": 2, "DWORD": 4, "INT": 2, "DINT": 4, "REAL": 4}
+TYPE_SIZES: dict[str, int] = {
+    "BOOL": 1,
+    "BYTE": 1,
+    "WORD": 2,
+    "DWORD": 4,
+    "INT": 2,
+    "DINT": 4,
+    "REAL": 4,
+    "LINT": 8,
+    "ULINT": 8,
+    "LREAL": 8,
+}
 SUPPORTED_TYPES = (*TYPE_SIZES, "STRING")
 INT_RANGES: dict[str, tuple[int, int]] = {
     "BYTE": (0, 255),
@@ -23,6 +35,8 @@ INT_RANGES: dict[str, tuple[int, int]] = {
     "DWORD": (0, 4294967295),
     "INT": (-32768, 32767),
     "DINT": (-2147483648, 2147483647),
+    "LINT": (-(2**63), 2**63 - 1),
+    "ULINT": (0, 2**64 - 1),
 }
 AREA_ALIASES: dict[str, str] = {
     "db": "db",
@@ -216,19 +230,30 @@ def decode_scalar(payload: bytes, dtype: str, bit: int | None = None) -> Any:
     if dtype == "REAL":
         value = struct.unpack(">f", payload[:4])[0]
         return _float32_shortest(value) if math.isfinite(value) else str(value)
+    if dtype == "LREAL":
+        value = struct.unpack(">d", payload[:8])[0]
+        return value if math.isfinite(value) else str(value)
     width = TYPE_SIZES[dtype]
-    return int.from_bytes(payload[:width], "big", signed=dtype in {"INT", "DINT"})
+    return int.from_bytes(payload[:width], "big", signed=dtype in {"INT", "DINT", "LINT"})
 
 
 def encode_scalar(value: Any, dtype: str) -> bytes:
-    if dtype == "REAL":
+    if dtype in {"REAL", "LREAL"}:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"REAL value must be a number, got {type(value).__name__} {value!r}")
-        number = float(value)
-        if not math.isfinite(number) or abs(number) > FLOAT32_MAX:
-            raise ValueError(f"REAL value must be finite and within +/-{FLOAT32_MAX:g}, got {value!r}")
-        return struct.pack(">f", number)
+            raise ValueError(f"{dtype} value must be a number, got {type(value).__name__} {value!r}")
+        try:
+            number = float(value)
+        except OverflowError:
+            raise ValueError(f"{dtype} value exceeds its finite range") from None
+        if not math.isfinite(number) or (dtype == "REAL" and abs(number) > FLOAT32_MAX):
+            raise ValueError(f"{dtype} value must be finite and within its representable range")
+        return struct.pack(">f" if dtype == "REAL" else ">d", number)
     lo, hi = INT_RANGES[dtype]
+    if dtype in {"LINT", "ULINT"} and isinstance(value, str):
+        # Canonical decimal only: no float conversion, exponents, whitespace or prefixes.
+        if len(value) > 20 or re.fullmatch(r"(?:0|-?[1-9][0-9]*)", value) is None:
+            raise ValueError(f"{dtype} value must be an integer or canonical decimal string")
+        value = int(value)
     number = int_arg(value, f"{dtype} value", lo, hi)
     return number.to_bytes(TYPE_SIZES[dtype], "big", signed=lo < 0)
 

@@ -587,3 +587,25 @@ def test_server_exits_promptly_with_a_request_stuck_in_snap7(proxy: S7Proxy) -> 
     assert time.monotonic() - started < 8
     assert "Traceback" not in session.stderr
     assert proxy.count(S7_WRITE_VAR) == 1
+
+
+async def test_64bit_typed_values_round_trip_losslessly_over_stdio(mock_plc: MockPLC):
+    async with mcp_session(server_env(mock_plc.port, S7_WRITES_ENABLED="true")) as c:
+        for dtype, value in (
+            ("ULINT", str(2**64 - 1)),
+            ("LINT", str(-(2**63))),
+            ("ULINT", str(2**53 - 1)),
+            ("LREAL", 1.2345678901234567),
+        ):
+            written = await c.call(
+                "write_values", target="db", db_number=1, start_offset=40, data_type=dtype, value=value
+            )
+            assert written["success"], written
+            read = await c.call("read_values", source="db_typed", db_number=1, start_offset=40, data_type=dtype)
+            expected = int(value) if dtype != "LREAL" and abs(int(value)) <= 2**53 - 1 else value
+            assert read["data"]["value"] == expected
+            if isinstance(expected, str):
+                assert read["meta"]["value_encoding"] == "decimal_string"
+                assert "/data/value" in read["meta"]["encoded_integer_paths"]
+            else:
+                assert "value_encoding" not in read["meta"]

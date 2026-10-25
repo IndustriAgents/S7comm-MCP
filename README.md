@@ -148,3 +148,9 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for local s
 MIT — see [LICENSE](LICENSE).
 
 Inspect `get_connection_status` before device work: its `capabilities` describe backend support and native configuration gates, not device permissions or reachability. See the [protocol assessment](docs/protocol-assessment.md) for supported workflows and verification boundaries.
+
+## Additional protocol workflows
+
+Typed operations support eight-byte `LINT`, `ULINT` and `LREAL`. Use canonical decimal strings for exact 64-bit integer writes. Unsafe JSON integers are returned as decimal strings with `meta.encoded_integer_paths`; the commissioned standard DB layout and CPU type support remain operator prerequisites.
+
+See [the protocol assessment and prioritized roadmap](docs/protocol-assessment.md) for limits, evidence and remaining work.
